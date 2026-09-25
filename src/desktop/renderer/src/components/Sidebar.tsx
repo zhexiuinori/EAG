@@ -265,6 +265,24 @@ export default function Sidebar({ isAdmin }: Props) {
       ) : (
         /* ── 助手列表 ── */
         <>
+          {/* 全部动态：跨 Agent 时间线入口（PRD-001 R3） */}
+          <div className="px-2 pt-3">
+            <button
+              onClick={() => nav("/app/activity")}
+              className={`item-interactive group relative w-full flex items-center gap-2.5 pl-3.5 pr-2.5 py-2 rounded-lg text-[13px] ${
+                loc.pathname.startsWith("/app/activity") ? "item-active" : "text-fg-subtle"
+              }`}
+            >
+              <span
+                className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 rounded-r-full transition-all duration-150 ${
+                  loc.pathname.startsWith("/app/activity") ? "h-4 bg-primary" : "h-0 bg-transparent"
+                }`}
+              />
+              <IconClock size={15} className={loc.pathname.startsWith("/app/activity") ? "text-primary" : "text-fg-faint group-hover:text-fg-subtle"} />
+              <span className="truncate">全部动态</span>
+            </button>
+          </div>
+
           <div className="px-3 pt-3 pb-1">
             <div className="flex items-center gap-1.5 mb-2">
               <span className="text-[10px] font-semibold text-fg-faint uppercase tracking-[0.08em]">

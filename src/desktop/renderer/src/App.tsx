@@ -2,6 +2,8 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/Layout.tsx";
 import Workspace from "./pages/Workspace.tsx";
 import WorkChat from "./pages/WorkChat.tsx";
+import Activity from "./pages/Activity.tsx";
+import AgentHome from "./pages/AgentHome.tsx";
 import AdminWorkers from "./pages/AdminWorkers.tsx";
 import Audit from "./pages/Audit.tsx";
 import Policy from "./pages/Policy.tsx";
@@ -27,6 +29,8 @@ export default function App() {
         {/* User workspace（需登录） */}
         <Route index element={<Navigate to="/app" replace />} />
         <Route path="/app" element={<RequireAuth><Workspace /></RequireAuth>} />
+        <Route path="/app/activity" element={<RequireAuth><Activity /></RequireAuth>} />
+        <Route path="/app/agent/:workerId" element={<RequireAuth><AgentHome /></RequireAuth>} />
         <Route path="/app/chat/:workerId" element={<RequireAuth><WorkChat /></RequireAuth>} />
         <Route path="/app/chat/:workerId/:sessionId" element={<RequireAuth><WorkChat /></RequireAuth>} />
 
