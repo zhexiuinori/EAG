@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import * as ipc from "../lib/ipc.ts";
+import { passwordPolicyOk, PASSWORD_POLICY_LABEL } from "../lib/password.ts";
 import PageShell from "../components/PageShell.tsx";
 import Button from "../components/Button.tsx";
 import EmptyState from "../components/EmptyState.tsx";
@@ -26,7 +27,7 @@ function AddUserDialog({ open, onClose, onAdd }: AddUserDialogProps) {
   const [canManageConsole, setCanManageConsole] = useState(false);
 
   const handleAdd = () => {
-    if (!name.trim() || !username.trim() || password.length < 6) return;
+    if (!name.trim() || !username.trim() || !passwordPolicyOk(password)) return;
     onAdd({ name: name.trim(), username: username.trim(), password, role, canManageConsole });
     setName(""); setUsername(""); setPassword(""); setRole("user"); setCanManageConsole(false);
   };
@@ -45,7 +46,7 @@ function AddUserDialog({ open, onClose, onAdd }: AddUserDialogProps) {
       footer={
         <>
           <Button onClick={handleCancel}>取消</Button>
-          <Button variant="primary" onClick={handleAdd} disabled={!name.trim() || !username.trim() || password.length < 6}>添加</Button>
+          <Button variant="primary" onClick={handleAdd} disabled={!name.trim() || !username.trim() || !passwordPolicyOk(password)}>添加</Button>
         </>
       }
     >
@@ -78,7 +79,7 @@ function AddUserDialog({ open, onClose, onAdd }: AddUserDialogProps) {
 
         <div>
           <label className="block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-faint mb-1.5">
-            初始密码（至少 6 位）
+            初始密码（{PASSWORD_POLICY_LABEL}）
           </label>
           <input
             type="password"
@@ -233,7 +234,7 @@ function EditUserDialog({ user, onClose, onSaved }: EditUserDialogProps) {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="至少 6 位"
+            placeholder={PASSWORD_POLICY_LABEL}
             className="field"
           />
           <p className="mt-1.5 text-[10.5px] text-fg-faint">
@@ -928,7 +929,7 @@ export default function Settings() {
             <Button onClick={() => { setResetTarget(null); setResetPwd(""); }}>取消</Button>
             <Button
               variant="primary"
-              disabled={resetting || resetPwd.length < 6}
+              disabled={resetting || !passwordPolicyOk(resetPwd)}
               onClick={() => {
                 if (!resetTarget) return;
                 setResetting(true);
@@ -949,14 +950,14 @@ export default function Settings() {
       >
         <div>
           <label className="block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-faint mb-1.5">
-            新密码（至少 6 位）
+            新密码（{PASSWORD_POLICY_LABEL}）
           </label>
           <input
             type="password"
             autoFocus
             value={resetPwd}
             onChange={(e) => setResetPwd(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && resetPwd.length >= 6 && !resetting && (e.target as HTMLInputElement).form?.requestSubmit()}
+            onKeyDown={(e) => e.key === "Enter" && passwordPolicyOk(resetPwd) && !resetting && (e.target as HTMLInputElement).form?.requestSubmit()}
             placeholder="••••••••"
             className="field"
           />

@@ -333,9 +333,14 @@ app.get("/api/chat/:workerId", (req, res) => {
 // -- Auth --
 app.get("/api/auth/session", (req, res) => res.json(sessionUser(req)));
 app.post("/api/auth/login", (req, res) => {
-  const r = userService.login({ username: req.body?.username, password: req.body?.password });
-  if (!r) return res.status(401).json({ error: "用户名或密码错误" });
-  res.json(r);
+  const r = userService.login({ username: req.body?.username ?? "", password: req.body?.password ?? "" });
+  if (!r.ok) {
+    if (r.reason === "locked") {
+      return res.status(423).json({ error: "登录失败次数过多，账号已临时锁定", retryAfterSec: r.retryAfterSec });
+    }
+    return res.status(401).json({ error: "用户名或密码错误" });
+  }
+  res.json({ session: r.session, token: r.token, passwordWeak: r.passwordWeak });
 });
 app.post("/api/auth/logout", (req, res) => {
   userService.logout(req.header("x-eag-token"));
@@ -349,10 +354,16 @@ app.post("/api/auth/change-password", (req, res) => {
   }
   const hasOld = !!req.body?.oldPassword;
   const newLen = String(req.body?.newPassword ?? "").length;
+  // 先查密码策略，给出具体文案（而不是笼统的"旧密码不正确"）
+  const pwErr = userService.passwordPolicyError(req.body?.newPassword);
+  if (pwErr) {
+    console.log(`[auth] change-password user=${s.userName} -> policy reject (${pwErr})`);
+    return res.status(400).json({ error: pwErr });
+  }
   const r = userService.changePassword(s.userId, req.body?.oldPassword, req.body?.newPassword);
   // 诊断日志：每次改密请求都留痕（含是否带旧密码、新密码长度、结果）
   console.log(`[auth] change-password user=${s.userName} hasOld=${hasOld} newLen=${newLen} -> ${r ? "ok" : "fail"}`);
-  if (!r) return res.status(400).json({ error: "旧密码不正确，或新密码不足 6 位" });
+  if (!r) return res.status(400).json({ error: "旧密码不正确" });
   res.json(r);
 });
 
