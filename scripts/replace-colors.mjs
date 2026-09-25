@@ -1,7 +1,7 @@
 // Bulk replace old color tokens with new n-* tokens across all components/pages.
 // Run with: node scripts/replace-colors.mjs
 
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..", "src", "desktop", "renderer", "src");

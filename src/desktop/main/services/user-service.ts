@@ -101,7 +101,7 @@ function load(): UserRecord[] {
   return [...DEFAULT_USERS];
 }
 
-let users: UserRecord[] = load();
+const users: UserRecord[] = load();
 
 let currentSession: AuthSession = { userId: "", userName: "", username: "", role: "user", canManageConsole: false };
 
