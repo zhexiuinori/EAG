@@ -55,6 +55,22 @@ export interface Worker {
   config: WorkerConfig;
   createdAt: string;
   updatedAt: string;
+  /**
+   * 归档时刻（归档不删除）：归档后默认从列表与用户可见性中隐藏，
+   * 记录保留可恢复、可追溯（对齐 AgentTeams 的 archive-not-delete）。
+   */
+  archivedAt?: string;
+  /** 配置版本历史（新→旧，最多 10 版）：每次配置变更快照旧版，可回滚 */
+  configHistory?: WorkerConfigVersion[];
+}
+
+/** Worker 配置的历史版本（被替换时的旧版快照） */
+export interface WorkerConfigVersion {
+  /** 该版本被替换（成为历史）的时刻 */
+  replacedAt: string;
+  /** 变更操作者（userId；系统/未知时为空） */
+  operatorId?: string;
+  config: WorkerConfig;
 }
 
 export interface WorkerListResult { workers: Worker[] }
@@ -66,6 +82,12 @@ export interface WorkerCreateInput {
   assignedGroupIds?: string[];
 }
 export interface WorkerUpdateInput { id: string; patch: Partial<Worker> }
+/** 归档 / 恢复（归档不删除，记录保留可恢复） */
+export interface WorkerArchiveInput { id: string; archived: boolean }
+/** 克隆 Worker（模板化复制：配置与分配随副本，会话与用量不带） */
+export interface WorkerCloneInput { id: string; name?: string }
+/** 回滚到某个历史配置版本（versionIndex = configHistory 下标，0=最近一版） */
+export interface WorkerRollbackInput { id: string; versionIndex: number }
 
 /** 重新分配：谁能用这个 Agent（用户 + 组）。 */
 export interface WorkerAssignInput {
@@ -109,6 +131,8 @@ export interface User {
 /** 服务端内部记录：额外持有密码哈希（scrypt 加盐），禁止出网。 */
 export interface UserRecord extends User {
   passwordHash: string;
+  /** 会话吊销时刻（ms）：此前签发的 token 一律失效（管理员强制下线）。 */
+  tokenRevokedBefore?: number;
 }
 
 export interface UserListResult { users: User[] }
@@ -120,6 +144,20 @@ export interface UserCreateInput {
   canManageConsole?: boolean;
 }
 export interface UserDeleteInput { id: string }
+/** 吊销某用户的全部登录会话（强制重新登录；不改密码） */
+export interface UserRevokeTokensInput { id: string }
+/** 登录历史查询：默认近 7 天、最多 100 条（按时间倒序） */
+export interface LoginHistoryInput { userId?: string; days?: number; limit?: number }
+export interface LoginHistoryEntry {
+  timestamp: string;
+  userId: string;
+  username: string;
+  /** 事件：登录 / 登出 / 吊销会话 / 修改密码 */
+  action: string;
+  ok: boolean;
+  reason?: string;
+}
+export interface LoginHistoryResult { entries: LoginHistoryEntry[] }
 /** 用户更新（仅管理端可调）：改名称/角色/后台授权/重置密码 */
 export interface UserUpdateInput {
   id: string;
@@ -234,7 +272,7 @@ export interface PolicyEffectiveInput { workerId: string }
 export interface PolicyCheckResult { allowed: boolean; access: string | null }
 
 // -- Audit ------------------------------------------------------------------
-export interface AuditListInput { date?: string; limit?: number; search?: string; workerId?: string }
+export interface AuditListInput { date?: string; limit?: number; search?: string; workerId?: string; userId?: string }
 export interface AuditEntry {
   timestamp: string; userId: string; toolName: string;
   toolCallId: string | undefined; phase: "call" | "result";
@@ -461,7 +499,13 @@ export interface ModelProvider {
   baseUrl: string; apiKey?: string;
   models: string[]; activeModel: string; isDefault?: boolean;
 }
-export interface ModelProviderTestInput { type: ProviderType; baseUrl: string; apiKey?: string; model: string }
+/**
+ * apiKey 掩码哨兵（凭证隔离）：渲染进程拿到的已存密钥一律是这个值，
+ * 明文只在主进程内部解析（resolveModelRef → adapter 注入）。
+ * 回传配置时主进程把它还原为磁盘原值；测试连接时按 providerId 解析真实密钥。
+ */
+export const API_KEY_MASK = "••••••••";
+export interface ModelProviderTestInput { type: ProviderType; baseUrl: string; apiKey?: string; model: string; providerId?: string }
 export interface ModelProviderTestResult { success: boolean; latencyMs?: number; error?: string }
 
 // -- 配置体检（Provider 连通性 + Agent 可运行性）------------------------------

@@ -64,6 +64,13 @@ export default function AdminWorkers() {
   const [assignGroups, setAssignGroups] = useState<string[]>([]);
   const [assignSaving, setAssignSaving] = useState(false);
 
+  // 生命周期治理（B5）：归档（不删除、可恢复）/ 克隆 / 配置版本回滚
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<Worker | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<Worker | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+
   const loading = !loadedAll;
 
   const reload = useCallback(() => {
@@ -244,18 +251,61 @@ export default function AdminWorkers() {
 
   const assignedUserName = (id: string) => users.find((u) => u.id === id)?.name || id;
 
+  const handleArchive = (w: Worker, archived: boolean) => {
+    setArchiving(true);
+    ipc.workerArchive({ id: w.id, archived })
+      .then(() => {
+        toast.success(archived ? "已归档（对用户隐藏，可恢复）" : "已恢复");
+        setArchiveTarget(null);
+        reload();
+        void useWorkerStore.getState().loadMine(true);
+      })
+      .catch((e) => toast.error(`${archived ? "归档" : "恢复"}失败：${e}`))
+      .finally(() => setArchiving(false));
+  };
+
+  const handleClone = (w: Worker) => {
+    setLifecycleBusy(true);
+    ipc.workerClone({ id: w.id })
+      .then((c) => { if (c) { toast.success(`已克隆为「${c.name}」`); reload(); } })
+      .catch((e) => toast.error(`克隆失败：${e}`))
+      .finally(() => setLifecycleBusy(false));
+  };
+
+  const handleRollback = (versionIndex: number) => {
+    if (!historyTarget) return;
+    setLifecycleBusy(true);
+    ipc.workerRollbackConfig({ id: historyTarget.id, versionIndex })
+      .then(() => {
+        toast.success("配置已回滚（回滚前的配置已存入历史，可再回滚回来）");
+        setHistoryTarget(null);
+        reload();
+      })
+      .catch((e) => toast.error(`回滚失败：${e}`))
+      .finally(() => setLifecycleBusy(false));
+  };
+
   const runningCount = workers.filter((w) => w.status === "running").length;
   const errorCount = workers.filter((w) => w.status === "error").length;
   const engineKinds = Array.from(new Set(workers.map((w) => w.config.agentKind ?? "pi")));
+  const archivedCount = workers.filter((w) => w.archivedAt).length;
+  const visibleWorkers = showArchived ? workers : workers.filter((w) => !w.archivedAt);
 
   return (
     <PageShell
       title="Workers"
       description="管理与治理所有 Agent 实例"
       actions={
-        <Button variant="primary" icon={<IconPlus size={13} />} onClick={() => setShowCreate(true)}>
-          创建 Worker
-        </Button>
+        <div className="flex items-center gap-2">
+          {archivedCount > 0 && (
+            <Button variant="ghost" onClick={() => setShowArchived(!showArchived)}>
+              {showArchived ? "隐藏已归档" : `显示已归档（${archivedCount}）`}
+            </Button>
+          )}
+          <Button variant="primary" icon={<IconPlus size={13} />} onClick={() => setShowCreate(true)}>
+            创建 Worker
+          </Button>
+        </div>
       }
       scroll={false}
     >
@@ -272,7 +322,7 @@ export default function AdminWorkers() {
         <div className="flex-1 min-h-0 card overflow-auto">
           {loading ? (
             <div className="px-4 py-10 text-center text-[11.5px] text-fg-faint">加载中…</div>
-          ) : workers.length === 0 ? (
+          ) : visibleWorkers.length === 0 ? (
             <div className="px-4 py-14 text-center">
               <div className="mx-auto size-10 rounded-xl bg-n-850 border border-line flex items-center justify-center mb-3">
                 <IconWorkspace size={18} className="text-fg-faint" />
@@ -294,13 +344,21 @@ export default function AdminWorkers() {
                 </tr>
               </thead>
               <tbody>
-                {workers.map((w) => {
+                {visibleWorkers.map((w) => {
                   const running = w.status === "running";
                   const errored = w.status === "error";
+                  const versionCount = w.configHistory?.length ?? 0;
                   return (
-                    <tr key={w.id}>
+                    <tr key={w.id} className={w.archivedAt ? "opacity-60" : undefined}>
                       <td>
-                        <div className="text-[12.5px] text-fg font-medium truncate">{w.name}</div>
+                        <div className="text-[12.5px] text-fg font-medium truncate">
+                          {w.name}
+                          {w.archivedAt && (
+                            <span className="ml-1.5 text-[9px] px-1 py-px rounded bg-n-850 border border-line text-fg-faint align-middle">
+                              已归档
+                            </span>
+                          )}
+                        </div>
                         {w.description && (
                           <div className="text-[10.5px] text-fg-faint truncate mt-0.5">{w.description}</div>
                         )}
@@ -327,21 +385,53 @@ export default function AdminWorkers() {
                             running ? "bg-green" : errored ? "bg-red" : "bg-n-600"
                           }`} />
                           <span className="text-[11.5px] capitalize">
-                            {running ? "运行中" : errored ? "异常" : "已停止"}
+                            {running ? "运行中" : errored ? "异常" : w.archivedAt ? "已归档" : "已停止"}
                           </span>
                         </span>
                       </td>
                       <td>
                         <div className="flex items-center gap-1">
-                          <Button size="sm" variant="ghost" icon={<IconUsers size={12} />} onClick={() => openAssign(w)}>
-                            分配
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleStart(w.id)}>
-                            {running ? "重启" : "启动"}
-                          </Button>
-                          <Button size="sm" variant="danger" onClick={() => setConfirmDelete(w.id)}>
-                            删除
-                          </Button>
+                          {w.archivedAt ? (
+                            <>
+                              <Button size="sm" variant="ghost" disabled={lifecycleBusy} onClick={() => handleArchive(w, false)}>
+                                恢复
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={lifecycleBusy} onClick={() => handleClone(w)}>
+                                克隆
+                              </Button>
+                              <Button size="sm" variant="danger" onClick={() => setConfirmDelete(w.id)}>
+                                彻底删除
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="ghost" icon={<IconUsers size={12} />} onClick={() => openAssign(w)}>
+                                分配
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleStart(w.id)}>
+                                {running ? "重启" : "启动"}
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={lifecycleBusy} onClick={() => handleClone(w)}>
+                                克隆
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setArchiveTarget(w)}>
+                                归档
+                              </Button>
+                              <Button size="sm" variant="danger" onClick={() => setConfirmDelete(w.id)}>
+                                删除
+                              </Button>
+                            </>
+                          )}
+                          {versionCount > 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title="配置版本历史（可回滚）"
+                              onClick={() => setHistoryTarget(w)}
+                            >
+                              版本{versionCount}
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -705,6 +795,50 @@ export default function AdminWorkers() {
             分配变更会写入审计。
           </p>
         </div>
+      </Modal>
+
+      {/* 归档确认：停止会话、对用户隐藏，历史与审计保留，可恢复 */}
+      <ConfirmModal
+        open={archiveTarget !== null}
+        title={`归档「${archiveTarget?.name ?? ""}」？`}
+        description="归档后正在运行的会话会被停止，该 Agent 对用户侧隐藏；历史与审计保留，可随时恢复或克隆。"
+        confirmText="归档"
+        danger
+        busy={archiving}
+        onCancel={() => setArchiveTarget(null)}
+        onConfirm={() => { if (archiveTarget) handleArchive(archiveTarget, true); }}
+      />
+
+      {/* 配置版本历史：每次配置变更自动留存旧版，可回滚（回滚前先把当前配置入史） */}
+      <Modal
+        open={historyTarget !== null}
+        title={`配置版本历史 · ${historyTarget?.name ?? ""}`}
+        onClose={() => setHistoryTarget(null)}
+        footer={
+          <Button onClick={() => setHistoryTarget(null)}>关闭</Button>
+        }
+      >
+        <div className="space-y-2 max-h-80 overflow-y-auto">
+          {(historyTarget?.configHistory ?? []).map((v, idx) => (
+            <div key={idx} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-[11.5px] text-fg-muted font-mono truncate">
+                  {v.config?.modelName ?? "—"} · {v.config?.agentKind ?? "—"}
+                </div>
+                <div className="text-[10px] text-fg-faint mt-0.5">
+                  被替换于 {v.replacedAt ? new Date(v.replacedAt).toLocaleString("zh-CN") : "—"}
+                  {v.operatorId ? ` · 操作者 ${assignedUserName(v.operatorId)}` : ""}
+                </div>
+              </div>
+              <Button size="sm" variant="ghost" disabled={lifecycleBusy} onClick={() => handleRollback(idx)}>
+                回滚到此版
+              </Button>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-fg-faint mt-2">
+          回滚前会把当前配置先存入历史，可随时再回滚回来；最多保留 10 个版本。
+        </p>
       </Modal>
 
       {/* 删除确认（替代手写弹窗） */}

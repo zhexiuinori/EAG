@@ -10,6 +10,7 @@ import type {
   AppConfig, ModelProvider, ProviderType,
   ProviderHealthResult, ProviderHealthStatus,
 } from "@shared/types.ts";
+import { API_KEY_MASK } from "@shared/types.ts";
 
 /** 体检状态 → 圆点色 + 中文标签（每一类对应不同的修法） */
 const HEALTH_DOT: Record<ProviderHealthStatus, string> = {
@@ -198,6 +199,10 @@ function SidePanel({ provider, onSave, onDelete, onTestConnection, testing, onCl
                 type={showKey ? "text" : "password"}
                 value={draft.apiKey ?? ""}
                 onChange={(e) => update({ apiKey: e.target.value })}
+                onFocus={() => {
+                  // 掩码哨兵不是真密钥：聚焦准备输入时清空，避免把新密钥拼在掩码后
+                  if (draft.apiKey === API_KEY_MASK) update({ apiKey: "" });
+                }}
                 placeholder="sk-..."
                 className="field pr-14 font-mono"
               />
@@ -208,6 +213,11 @@ function SidePanel({ provider, onSave, onDelete, onTestConnection, testing, onCl
                 {showKey ? "HIDE" : "SHOW"}
               </button>
             </div>
+            {draft.apiKey === API_KEY_MASK && (
+              <p className="mt-1.5 text-[10.5px] text-n-500">
+                密钥已保存，不明文回显（凭证隔离）；不修改则保持原值，输入新值即更换。
+              </p>
+            )}
           </div>
 
           {/* Models */}
@@ -386,7 +396,7 @@ export default function Models() {
     const target = p.id;
     setTestingId(target);
     ipc
-      .providerTest({ type: p.type, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.activeModel || (p.models[0] ?? "") })
+      .providerTest({ type: p.type, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.activeModel || (p.models[0] ?? ""), providerId: p.id })
       .then((res) => {
         if (res.success) {
           toast.success(`连接成功 · ${res.latencyMs ?? "?"}ms`);

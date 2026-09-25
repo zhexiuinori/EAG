@@ -9,6 +9,12 @@ export const IPC_CHANNELS = {
   WORKER_CREATE: "worker:create",
   WORKER_UPDATE: "worker:update",
   WORKER_DELETE: "worker:delete",
+  /** 归档/恢复（归档不删除，可恢复） */
+  WORKER_ARCHIVE: "worker:archive",
+  /** 以现有 Worker 为模板克隆副本 */
+  WORKER_CLONE: "worker:clone",
+  /** 回滚配置到历史版本 */
+  WORKER_ROLLBACK_CONFIG: "worker:rollback-config",
   WORKER_START: "worker:start",
   WORKER_STATUS: "worker:status",
   /** 重新分配（多用户 + 用户组） */
@@ -27,12 +33,16 @@ export const IPC_CHANNELS = {
   USER_CREATE: "user:create",
   USER_UPDATE: "user:update",
   USER_DELETE: "user:delete",
+  /** 吊销某用户的全部登录会话（强制重新登录） */
+  USER_REVOKE_TOKENS: "user:revoke-tokens",
 
   // Admin — auth
   AUTH_LOGIN: "auth:login",
   AUTH_LOGOUT: "auth:logout",
   AUTH_SESSION: "auth:session",
   AUTH_CHANGE_PASSWORD: "auth:change-password",
+  /** 认证事件历史（登录/登出/吊销/改密，源自审计日志） */
+  AUTH_LOGIN_HISTORY: "auth:login-history",
 
   // Admin — policy
   POLICY_GET: "policy:get",
@@ -163,10 +173,16 @@ export const PRIVILEGED_IPC_CHANNELS: ReadonlySet<string> = new Set<string>([
   IPC_CHANNELS.WORKER_CREATE,
   IPC_CHANNELS.WORKER_UPDATE,
   IPC_CHANNELS.WORKER_DELETE,
+  IPC_CHANNELS.WORKER_ARCHIVE,
+  IPC_CHANNELS.WORKER_CLONE,
+  IPC_CHANNELS.WORKER_ROLLBACK_CONFIG,
   IPC_CHANNELS.WORKER_ASSIGN,
   IPC_CHANNELS.USER_CREATE,
   IPC_CHANNELS.USER_UPDATE,
   IPC_CHANNELS.USER_DELETE,
+  // 吊销会话与登录历史属身份治理操作/信息，仅管理员
+  IPC_CHANNELS.USER_REVOKE_TOKENS,
+  IPC_CHANNELS.AUTH_LOGIN_HISTORY,
   IPC_CHANNELS.GROUP_UPSERT,
   IPC_CHANNELS.GROUP_DELETE,
   IPC_CHANNELS.SWARM_EXECUTE,

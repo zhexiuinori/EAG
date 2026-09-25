@@ -120,6 +120,9 @@ export function registerAllHandlers(): void {
     return workerService.updateWorker({ id: i.id, patch });
   });
   handle(IPC_CHANNELS.WORKER_DELETE, async (_e, i: { id: string }) => workerService.deleteWorker(i.id));
+  handle(IPC_CHANNELS.WORKER_ARCHIVE, async (_e, i: T.WorkerArchiveInput) => workerService.archiveWorker(i));
+  handle(IPC_CHANNELS.WORKER_CLONE, async (_e, i: T.WorkerCloneInput) => workerService.cloneWorker(i));
+  handle(IPC_CHANNELS.WORKER_ROLLBACK_CONFIG, async (_e, i: T.WorkerRollbackInput) => workerService.rollbackWorkerConfig(i));
   handle(IPC_CHANNELS.WORKER_START, async (_e, i: { id: string }) => workerService.startWorker(i.id));
   handle(IPC_CHANNELS.WORKER_STATUS, async (_e, i: { id: string }) => workerService.getWorkerStatus(i.id));
   handle(IPC_CHANNELS.WORKER_ASSIGN, async (_e, i: T.WorkerAssignInput) => workerService.assignWorker(i));
@@ -186,6 +189,9 @@ export function registerAllHandlers(): void {
     }
     return ok;
   });
+  // 吊销某用户的全部登录会话（强制重新登录；不改密码）
+  handle(IPC_CHANNELS.USER_REVOKE_TOKENS, async (_e, i: T.UserRevokeTokensInput) =>
+    userService.revokeUserTokens(i.id));
 
   // -- User groups --
   handle(IPC_CHANNELS.GROUP_LIST, async (): Promise<T.GroupListResult> => ({ groups: groupService.listGroups() }));
@@ -206,6 +212,9 @@ export function registerAllHandlers(): void {
   handle(IPC_CHANNELS.AUTH_CHANGE_PASSWORD, async (_e, i: T.ChangePasswordInput) =>
     userService.changePassword(userService.getSession().userId, i.oldPassword, i.newPassword));
   handle(IPC_CHANNELS.AUTH_SESSION, async () => userService.getSession());
+  // 认证事件历史（登录/登出/吊销/改密，源自审计日志）—— 仅管理员（特权 channel）
+  handle(IPC_CHANNELS.AUTH_LOGIN_HISTORY, async (_e, i?: T.LoginHistoryInput) =>
+    auditApi.listLoginHistory(i));
 
   // -- Policy --
   handle(IPC_CHANNELS.POLICY_GET, async () => ({ policies: policyApi.getPolicy() }));
@@ -277,7 +286,8 @@ export function registerAllHandlers(): void {
   handle(IPC_CHANNELS.EGRESS_WHITELIST, async () => ({ endpoints: WHITELISTED_ENDPOINTS }));
 
   // -- Config / Providers --
-  handle(IPC_CHANNELS.CONFIG_GET, async () => configApi.getConfig());
+  // 渲染进程只拿掩码视图（凭证隔离）：apiKey 明文不出主进程
+  handle(IPC_CHANNELS.CONFIG_GET, async () => configApi.getPublicConfig());
   handle(IPC_CHANNELS.CONFIG_UPDATE, async (_e, i: Partial<T.AppConfig>) => {
     configApi.updateConfig(i);
   });

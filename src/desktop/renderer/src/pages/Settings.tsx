@@ -7,7 +7,7 @@ import EmptyState from "../components/EmptyState.tsx";
 import { Modal, ConfirmModal } from "../components/Modal.tsx";
 import { useToast } from "../components/Toast.tsx";
 import { IconPlus, IconUsers, IconPlay, IconStop, IconNetwork } from "../components/icons.tsx";
-import type { AppConfig, User, UserGroup, McpServerView, McpTool } from "@shared/types.ts";
+import type { AppConfig, User, UserGroup, McpServerView, McpTool, LoginHistoryEntry } from "@shared/types.ts";
 
 /* ------------------------------------------------------------------ */
 /*  添加用户对话框（共享 Modal）                                         */
@@ -270,6 +270,12 @@ export default function Settings() {
   const [resetPwd, setResetPwd] = useState("");
   const [resetting, setResetting] = useState(false);
   const [notifyTesting, setNotifyTesting] = useState(false);
+  // 会话吊销（强制该用户重新登录）
+  const [revokeTarget, setRevokeTarget] = useState<User | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  // 登录历史（认证事件：登录/登出/吊销/改密，源自审计日志）
+  const [history, setHistory] = useState<LoginHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [piStatus, setPiStatus] = useState<{ running: boolean; pid: number | null } | null>(null);
   const [piBusy, setPiBusy] = useState(false);
 
@@ -287,16 +293,42 @@ export default function Settings() {
     ipc.piStatus().then(setPiStatus).catch(() => setPiStatus(null));
   }, []);
 
+  const refreshHistory = useCallback(() => {
+    setHistoryLoading(true);
+    ipc
+      .loginHistory({ limit: 100 })
+      .then((r) => setHistory(r.entries ?? []))
+      .catch(() => setHistory([])) // 非管理员 / Web 兜底：无权限时静默为空
+      .finally(() => setHistoryLoading(false));
+  }, []);
+
+  /** 吊销某用户的全部登录会话（强制重新登录；不改密码） */
+  const confirmRevoke = async () => {
+    if (!revokeTarget) return;
+    setRevoking(true);
+    try {
+      await ipc.userRevokeTokens({ id: revokeTarget.id });
+      toast.success(`已吊销「${revokeTarget.name}」的全部会话，其需重新登录`);
+      setRevokeTarget(null);
+      refreshHistory();
+    } catch (e) {
+      toast.error(`吊销失败：${e}`);
+    } finally {
+      setRevoking(false);
+    }
+  };
+
   useEffect(() => {
     ipc.configGet().then(setConfig).catch(() => toast.error("配置加载失败"));
     ipc.userList().then((res) => setUsers(res.users)).catch(() => {});
     refreshGroups();
     refreshMcp();
     refreshPi();
+    refreshHistory();
     const iv = setInterval(refreshPi, 5000);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshPi, refreshGroups]);
+  }, [refreshPi, refreshGroups, refreshHistory]);
 
   const saveGroup = async () => {
     if (!groupEditor || !groupEditor.name.trim()) return;
@@ -530,6 +562,9 @@ export default function Settings() {
                   <Button size="sm" variant="ghost" onClick={() => setResetTarget(u)}>
                     重置密码
                   </Button>
+                  <Button size="sm" variant="ghost" title="强制该用户重新登录（不改密码）" onClick={() => setRevokeTarget(u)}>
+                    吊销会话
+                  </Button>
                   <Button size="sm" variant="danger" onClick={() => setPendingDelete(u)}>
                     删除
                   </Button>
@@ -537,6 +572,56 @@ export default function Settings() {
               ))
             )}
           </div>
+        </section>
+
+        {/* 登录历史 */}
+        <section>
+          <div className="flex items-center justify-between mb-2.5">
+            <h2 className="text-[12.5px] font-semibold text-fg-muted">登录历史</h2>
+            <Button size="sm" onClick={refreshHistory} disabled={historyLoading}>
+              {historyLoading ? "刷新中…" : "刷新"}
+            </Button>
+          </div>
+          <div className="card overflow-hidden">
+            {history.length === 0 ? (
+              <EmptyState
+                compact
+                icon={<IconUsers size={16} />}
+                title="近 7 天没有认证事件"
+                description="登录、登出、吊销会话、修改密码都会记录在这里（源自审计日志）。"
+              />
+            ) : (
+              <div className="max-h-64 overflow-y-auto">
+                {history.map((h, i) => (
+                  <div
+                    key={`${h.timestamp}-${i}`}
+                    className={`flex items-center gap-3 px-4 py-2 ${i > 0 ? "border-t border-line" : ""}`}
+                  >
+                    <span className="text-[10.5px] font-mono text-fg-faint whitespace-nowrap">
+                      {new Date(h.timestamp).toLocaleString()}
+                    </span>
+                    <span className="text-[11.5px] text-fg-muted truncate">@{h.username}</span>
+                    <span className="text-[11px] text-fg-subtle">{h.action}</span>
+                    <span className="ml-auto">
+                      {h.ok ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-bg text-green font-medium">成功</span>
+                      ) : (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-red-bg text-red font-medium"
+                          title={h.reason}
+                        >
+                          失败
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <p className="mt-2 text-[10.5px] text-fg-faint">
+            展示近 7 天最多 100 条认证事件；连续失败登录与锁定也会计入。数据源自审计日志，受哈希链保护。
+          </p>
         </section>
 
         {/* 用户组 */}
@@ -1050,6 +1135,20 @@ export default function Settings() {
         danger
         onCancel={() => setPendingDeleteGroup(null)}
         onConfirm={confirmDeleteGroup}
+      />
+
+      {/* 吊销会话确认 */}
+      <ConfirmModal
+        open={revokeTarget !== null}
+        title="吊销该用户的全部会话？"
+        description={revokeTarget
+          ? `「${revokeTarget.name}」的所有登录态将立即失效（含其他设备），需重新登录。密码不变，适用于 token 疑似泄漏或临时冻结。`
+          : undefined}
+        confirmText="吊销会话"
+        danger
+        busy={revoking}
+        onCancel={() => setRevokeTarget(null)}
+        onConfirm={confirmRevoke}
       />
 
       {/* 删除用户确认（替代 window.confirm） */}

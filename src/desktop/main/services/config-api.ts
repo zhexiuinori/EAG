@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { AppConfig, ModelProvider, ModelProviderTestInput, ModelProviderTestResult } from "../../shared/types.ts";
+import { API_KEY_MASK } from "../../shared/types.ts";
 import { CONFIG_PATH, DEFAULT_AUDIT_DIR } from "../paths.ts";
 import { loadDotEnv } from "./dotenv.ts";
 
@@ -101,9 +102,40 @@ export function getConfig(): AppConfig {
   return resolveSecrets(readRawConfig());
 }
 
+/**
+ * 面向渲染进程 / HTTP 的配置视图（凭证隔离）：已存的 apiKey 一律掩码为
+ * API_KEY_MASK，明文永不出主进程。主进程内部消费（resolveModelRef、
+ * provider-health、knowledge 等）仍走 getConfig() 拿解析后的真实值。
+ */
+export function getPublicConfig(): AppConfig {
+  const cfg = getConfig();
+  return {
+    ...cfg,
+    providers: cfg.providers.map((p) =>
+      p.apiKey ? { ...p, apiKey: API_KEY_MASK } : p,
+    ),
+  };
+}
+
+/**
+ * UI 回传的掩码哨兵还原为磁盘原值（可能是 "${...}" 占位符或明文），
+ * 避免把掩码当成真密钥落盘；新 Provider 携带哨兵（异常路径）按空密钥处理。
+ */
+function restoreMaskedKeys(raw: AppConfig, next: AppConfig): AppConfig {
+  const rawById = new Map(raw.providers.map((p) => [p.id, p]));
+  return {
+    ...next,
+    providers: next.providers.map((p) => {
+      if (p.apiKey !== API_KEY_MASK) return p;
+      const prev = rawById.get(p.id);
+      return { ...p, apiKey: prev?.apiKey ?? "" };
+    }),
+  };
+}
+
 export function updateConfig(partial: Partial<AppConfig>): void {
   const raw = readRawConfig();
-  const merged = preservePlaceholders(raw, { ...raw, ...partial });
+  const merged = preservePlaceholders(raw, restoreMaskedKeys(raw, { ...raw, ...partial }));
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
   if (merged.searchProxy) process.env.EAG_SEARCH_PROXY = merged.searchProxy;
   if (merged.auditDir) process.env.EAG_AUDIT_DIR = merged.auditDir;
@@ -111,6 +143,13 @@ export function updateConfig(partial: Partial<AppConfig>): void {
 
 export async function testProvider(input: ModelProviderTestInput): Promise<ModelProviderTestResult> {
   const start = Date.now();
+  // 掩码哨兵：渲染进程拿不到明文密钥，按 providerId 在主进程侧解析真实值再测试
+  if (input.apiKey === API_KEY_MASK) {
+    const real = input.providerId
+      ? getConfig().providers.find((p) => p.id === input.providerId)?.apiKey
+      : undefined;
+    input = { ...input, apiKey: real ?? "" };
+  }
   try {
     const base = input.baseUrl.replace(/\/+$/, "");
 

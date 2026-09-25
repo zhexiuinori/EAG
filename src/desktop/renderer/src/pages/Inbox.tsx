@@ -28,6 +28,8 @@ export default function Inbox() {
   const [filter, setFilter] = useState<"pending" | "all">("pending");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
 
   useEffect(() => {
     void load();
@@ -43,6 +45,53 @@ export default function Inbox() {
 
   const pending = useMemo(() => approvals.filter((a) => a.status === "pending"), [approvals]);
   const shown = filter === "pending" ? pending : approvals;
+
+  // 待批列表变化（轮询/事件）时，清掉已不在待批中的勾选项
+  useEffect(() => {
+    const pendingIds = new Set(pending.map((a) => a.id));
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => pendingIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [pending]);
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allPendingSelected = pending.length > 0 && pending.every((a) => selected.has(a.id));
+  const toggleSelectAll = () => {
+    setSelected(allPendingSelected ? new Set() : new Set(pending.map((a) => a.id)));
+  };
+
+  const handleBatchDecide = async (ok: boolean) => {
+    const ids = pending.filter((a) => selected.has(a.id)).map((a) => a.id);
+    if (ids.length === 0) return;
+    setBatchBusy(true);
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      for (const id of ids) {
+        try {
+          const done = await decide(id, ok);
+          if (done) succeeded++;
+          else failed++;
+        } catch {
+          failed++;
+        }
+      }
+      if (failed === 0) toast.success(`已批量${ok ? "批准" : "拒绝"} ${succeeded} 条请求`);
+      else toast.error(`批量${ok ? "批准" : "拒绝"}完成：成功 ${succeeded} 条，失败 ${failed} 条（可能已超时）`);
+      setSelected(new Set());
+    } finally {
+      setBatchBusy(false);
+    }
+  };
 
   const approved = approvals.filter((a) => a.status === "approved").length;
   const denied = approvals.filter((a) => a.status === "denied").length;
@@ -85,8 +134,8 @@ export default function Inbox() {
           <StatCard label="已超时" value={expired} hint="超时自动拒绝" icon={<IconAlert size={13} />} />
         </div>
 
-        {/* 筛选 */}
-        <div className="shrink-0 flex items-center gap-1.5">
+        {/* 筛选 + 批量操作 */}
+        <div className="shrink-0 flex items-center gap-1.5 flex-wrap">
           {([["pending", "待批"], ["all", "全部记录"]] as const).map(([k, label]) => (
             <button
               key={k}
@@ -100,6 +149,39 @@ export default function Inbox() {
               {label}
             </button>
           ))}
+          {pending.length > 0 && (
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={toggleSelectAll}
+                className="px-2.5 py-1 rounded-lg text-[11.5px] border border-transparent text-fg-subtle hover:text-fg-muted transition-colors"
+              >
+                {allPendingSelected ? "取消全选" : "全选待批"}
+              </button>
+              {selected.size > 0 && (
+                <>
+                  <span className="text-[11px] text-fg-faint">已选 {selected.size} 条</span>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<IconCheck size={12} />}
+                    disabled={batchBusy}
+                    onClick={() => void handleBatchDecide(true)}
+                  >
+                    批量批准
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={<IconX size={12} />}
+                    disabled={batchBusy}
+                    onClick={() => void handleBatchDecide(false)}
+                  >
+                    批量拒绝
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 列表 */}
@@ -119,6 +201,16 @@ export default function Inbox() {
               return (
                 <div key={rec.id} className={`card p-4 ${isPending ? "!border-yellow/40" : ""}`}>
                   <div className="flex items-center gap-2 flex-wrap">
+                    {isPending && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(rec.id)}
+                        onChange={() => toggleSelect(rec.id)}
+                        disabled={batchBusy}
+                        title="选择以批量处理"
+                        className="shrink-0 accent-primary cursor-pointer"
+                      />
+                    )}
                     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
                       rec.access === "read-only" ? "bg-blue-bg text-blue" : "bg-red-bg text-red"
                     }`}>

@@ -119,6 +119,8 @@ export function listAuditEntries(options?: {
   date?: string;
   limit?: number;
   search?: string;
+  userId?: string;
+  workerId?: string;
 }): { entries: unknown[]; date: string } {
   const date = options?.date || dateStamp();
   const auditDir = getAuditDir();
@@ -139,6 +141,16 @@ export function listAuditEntries(options?: {
     }
   }).filter(Boolean);
 
+  // Apply structured filters (before limit so the limit applies to matched entries)
+  if (options?.userId) {
+    const u = options.userId;
+    entries = entries.filter((e: any) => e?.userId === u);
+  }
+  if (options?.workerId) {
+    const w = options.workerId;
+    entries = entries.filter((e: any) => e?.workerId === w);
+  }
+
   // Apply search filter
   if (options?.search) {
     const q = options.search.toLowerCase();
@@ -153,6 +165,63 @@ export function listAuditEntries(options?: {
   }
 
   return { entries, date };
+}
+
+// ---------------------------------------------------------------------------
+// 登录历史（可运维性）：从审计日志中提取认证事件
+//
+// 数据源即审计日志本身 —— 不单独存储，保证与审计一致、同样受哈希链保护。
+// ---------------------------------------------------------------------------
+
+const AUTH_EVENT_ACTIONS: Record<string, string> = {
+  __auth_login: "登录",
+  __auth_logout: "登出",
+  __auth_revoke: "吊销会话",
+  __auth_change_password: "修改密码",
+};
+
+/**
+ * 最近 N 天的认证事件（登录/登出/吊销/改密），按时间倒序。
+ * days 上限 30，limit 上限 1000（防一次性读爆内存）。
+ */
+export function listLoginHistory(options?: {
+  userId?: string;
+  days?: number;
+  limit?: number;
+}): { entries: Array<Record<string, unknown>> } {
+  const days = Math.min(Math.max(options?.days ?? 7, 1), 30);
+  const limit = Math.min(Math.max(options?.limit ?? 100, 1), 1000);
+  const out: Array<Record<string, unknown>> = [];
+
+  for (let day = 0; day < days && out.length < limit; day++) {
+    const d = new Date();
+    d.setDate(d.getDate() - day);
+    const logPath = path.join(getAuditDir(), `audit-${dateStamp(d)}.ndjson`);
+    if (!fs.existsSync(logPath)) continue;
+
+    const lines = fs.readFileSync(logPath, "utf-8").split("\n").filter(Boolean);
+    for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+      let entry: any;
+      try {
+        entry = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      const action = AUTH_EVENT_ACTIONS[entry?.toolName as string];
+      if (!action) continue;
+      if (options?.userId && entry.userId !== options.userId) continue;
+      const input = (entry.input ?? {}) as Record<string, unknown>;
+      out.push({
+        timestamp: entry.timestamp,
+        userId: entry.userId,
+        username: typeof input.username === "string" ? input.username : entry.userId,
+        action,
+        ok: input.ok !== false && !entry.isError,
+        reason: entry.reason,
+      });
+    }
+  }
+  return { entries: out };
 }
 
 // ---------------------------------------------------------------------------

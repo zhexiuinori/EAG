@@ -11,6 +11,7 @@ import * as schedulerService from "../desktop/main/services/scheduler-service.ts
 import * as delegationService from "../desktop/main/services/delegation-service.ts";
 import * as providerHealthService from "../desktop/main/services/provider-health.ts";
 import * as notificationService from "../desktop/main/services/notification-service.ts";
+import * as auditApi from "../desktop/main/services/audit-api.ts";
 import { listAdapterStatus } from "../desktop/main/adapters/registry.ts";
 import type { AuthSession } from "../desktop/shared/types.ts";
 
@@ -89,6 +90,12 @@ consoleApi.get("/workers", (_req, res) => res.json({ workers: workerService.list
 consoleApi.post("/workers", (req, res) => res.json(workerService.createWorker(req.body)));
 consoleApi.put("/workers/:id", (req, res) => res.json(workerService.updateWorker({ id: req.params.id, patch: req.body })));
 consoleApi.delete("/workers/:id", (_req, res) => { workerService.deleteWorker(_req.params.id); res.json({ ok: true }); });
+consoleApi.post("/workers/:id/archive", (req, res) =>
+  res.json(workerService.archiveWorker({ id: req.params.id, archived: !!req.body?.archived })));
+consoleApi.post("/workers/:id/clone", (req, res) =>
+  res.json(workerService.cloneWorker({ id: req.params.id, name: req.body?.name })));
+consoleApi.post("/workers/:id/rollback-config", (req, res) =>
+  res.json(workerService.rollbackWorkerConfig({ id: req.params.id, versionIndex: req.body?.versionIndex })));
 consoleApi.post("/workers/:id/start", async (req, res) => res.json({ started: await workerService.startWorker(req.params.id) }));
 // 重新分配（多用户 + 组）—— 与 Electron 模式共用同一份 worker-service 逻辑
 consoleApi.post("/workers/:id/assign", (req, res) => {
@@ -120,6 +127,19 @@ consoleApi.put("/users/:id", (req, res) => {
   }
 });
 consoleApi.delete("/users/:id", (req, res) => { userService.deleteUser(req.params.id); res.json({ ok: true }); });
+// 吊销某用户的全部登录会话（强制重新登录；不改密码）
+consoleApi.post("/users/:id/revoke-tokens", (req, res) => {
+  const ok = userService.revokeUserTokens(req.params.id);
+  if (!ok) return res.status(404).json({ error: "用户不存在" });
+  res.json({ ok: true });
+});
+// 认证事件历史（登录/登出/吊销/改密，源自审计日志）
+consoleApi.get("/login-history", (req, res) =>
+  res.json(auditApi.listLoginHistory({
+    userId: typeof req.query.userId === "string" ? req.query.userId : undefined,
+    days: req.query.days ? Number(req.query.days) : undefined,
+    limit: req.query.limit ? Number(req.query.limit) : undefined,
+  })));
 
 consoleApi.get("/groups", (_req, res) => res.json({ groups: groupService.listGroups() }));
 consoleApi.post("/groups", (req, res) => res.json(groupService.upsertGroup(req.body)));
@@ -215,7 +235,8 @@ consoleApi.post("/mcp/:id/call", async (req, res) => {
 consoleApi.get("/policy", (_req, res) => res.json({ policies: policyApi.getPolicy() }));
 consoleApi.put("/policy", (req, res) => { policyApi.updatePolicy(req.body.policies); res.json({ ok: true }); });
 
-consoleApi.get("/config", (_req, res) => res.json(configApi.getConfig()));
+// Web 端同样只拿掩码视图（凭证隔离）：apiKey 明文不出服务端
+consoleApi.get("/config", (_req, res) => res.json(configApi.getPublicConfig()));
 consoleApi.put("/config", (req, res) => { configApi.updateConfig(req.body); res.json({ ok: true }); });
 
 consoleApi.get("/status", (req, res) => {

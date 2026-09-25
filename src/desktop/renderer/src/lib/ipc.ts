@@ -15,8 +15,11 @@ import type {
   SystemStatus, PiStartInput, PiStatusResult,
   EgressWhitelistResult, AppConfig, ModelProviderTestInput, ModelProviderTestResult,
   WorkerListResult, WorkerCreateInput, WorkerUpdateInput, WorkerAssignInput,
+  WorkerArchiveInput, WorkerCloneInput, WorkerRollbackInput,
   UserGroup, GroupListResult, GroupUpsertInput, GroupDeleteInput,
-  UserListResult, UserCreateInput, UserUpdateInput, UserDeleteInput, AuthSession, AuthLoginInput, AuthLoginResult,
+  UserListResult, UserCreateInput, UserUpdateInput, UserDeleteInput, UserRevokeTokensInput,
+  LoginHistoryInput, LoginHistoryResult,
+  AuthSession, AuthLoginInput, AuthLoginResult,
   AuthLoginOutcome, ChangePasswordInput,
   McpListResult, McpServerView, McpUpsertInput, McpDeleteInput, McpToolsInput, McpToolsResult,
   McpCallInput, McpCallResult,
@@ -258,6 +261,12 @@ export const workerUpdate = (i: WorkerUpdateInput) =>
   call<any>(IPC_CHANNELS.WORKER_UPDATE, () => invokeIPC(IPC_CHANNELS.WORKER_UPDATE, i), () => httpPut(`/admin/workers/${i.id}`, i.patch));
 export const workerDelete = (i: { id: string }) =>
   call<any>(IPC_CHANNELS.WORKER_DELETE, () => invokeIPC(IPC_CHANNELS.WORKER_DELETE, i), () => httpDel(`/admin/workers/${i.id}`));
+export const workerArchive = (i: WorkerArchiveInput) =>
+  call<Worker | undefined>(IPC_CHANNELS.WORKER_ARCHIVE, () => invokeIPC(IPC_CHANNELS.WORKER_ARCHIVE, i), () => httpPost<Worker>(`/admin/workers/${i.id}/archive`, { archived: i.archived }));
+export const workerClone = (i: WorkerCloneInput) =>
+  call<Worker | undefined>(IPC_CHANNELS.WORKER_CLONE, () => invokeIPC(IPC_CHANNELS.WORKER_CLONE, i), () => httpPost<Worker>(`/admin/workers/${i.id}/clone`, { name: i.name }));
+export const workerRollbackConfig = (i: WorkerRollbackInput) =>
+  call<Worker | undefined>(IPC_CHANNELS.WORKER_ROLLBACK_CONFIG, () => invokeIPC(IPC_CHANNELS.WORKER_ROLLBACK_CONFIG, i), () => httpPost<Worker>(`/admin/workers/${i.id}/rollback-config`, { versionIndex: i.versionIndex }));
 export const workerStart = (i: { id: string }) =>
   call<boolean>(IPC_CHANNELS.WORKER_START, () => invokeIPC(IPC_CHANNELS.WORKER_START, i), async () => { const r = await httpPost<{ started: boolean }>(`/admin/workers/${i.id}/start`); return r.started; });
 /** 重新分配（多用户 + 用户组）。 */
@@ -291,6 +300,23 @@ export const userUpdate = (i: UserUpdateInput) =>
   call<any>(IPC_CHANNELS.USER_UPDATE, () => invokeIPC(IPC_CHANNELS.USER_UPDATE, i), () => httpPut(`/admin/users/${i.id}`, i));
 export const userDelete = (i: UserDeleteInput) =>
   call<any>(IPC_CHANNELS.USER_DELETE, () => invokeIPC(IPC_CHANNELS.USER_DELETE, i), () => httpDel(`/admin/users/${i.id}`));
+/** 吊销某用户的全部登录会话（强制重新登录；不改密码）。 */
+export const userRevokeTokens = (i: UserRevokeTokensInput) =>
+  call<any>(IPC_CHANNELS.USER_REVOKE_TOKENS, () => invokeIPC(IPC_CHANNELS.USER_REVOKE_TOKENS, i), () => httpPost(`/admin/users/${i.id}/revoke-tokens`, {}));
+/** 认证事件历史（登录/登出/吊销/改密，源自审计日志）。 */
+export const loginHistory = (i?: LoginHistoryInput) =>
+  call<LoginHistoryResult>(
+    IPC_CHANNELS.AUTH_LOGIN_HISTORY,
+    () => invokeIPC(IPC_CHANNELS.AUTH_LOGIN_HISTORY, i),
+    () => {
+      const qs = new URLSearchParams();
+      if (i?.userId) qs.set("userId", i.userId);
+      if (i?.days) qs.set("days", String(i.days));
+      if (i?.limit) qs.set("limit", String(i.limit));
+      const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
+      return httpGet(`/admin/login-history${suffix}`);
+    },
+  );
 
 // -- Auth --
 export const authLogin = (i: AuthLoginInput) =>

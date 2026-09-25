@@ -97,6 +97,8 @@ function load(): UserRecord[] {
           canManageConsole: u.canManageConsole ?? isAdmin,
           createdAt: u.createdAt ?? new Date().toISOString(),
           passwordHash: u.passwordHash ?? hashPassword("admin123"),
+          // 会话吊销时刻需跨重启保留（否则重启后已吊销的 token 复活）
+          tokenRevokedBefore: u.tokenRevokedBefore,
         };
       });
       try {
@@ -288,6 +290,11 @@ export function verifyToken(token: string | undefined | null): AuthSession | und
     if (Date.now() - issuedAt > TOKEN_TTL_MS) return undefined;
     const u = users.find((x) => x.id === Buffer.from(uEnc, "base64url").toString("utf8"));
     if (!u) return undefined;
+    // 会话吊销：签发时间早于吊销时刻的 token 一律失效（管理员强制下线，见 revokeUserTokens）
+    if (issuedAt <= (u.tokenRevokedBefore ?? 0)) {
+      tokenCache.delete(token);
+      return undefined;
+    }
     // 哈希指纹含 passwordHash：改密/删号后指纹不匹配 → 旧 token 立即失效
     const key = mkTokenKey(u.id, u, issuedAt);
     if (key !== Buffer.from(kEnc, "base64url").toString("utf8")) {
@@ -410,6 +417,34 @@ export function logout(token?: string): void {
 
 export function getSession(): AuthSession {
   return currentSession;
+}
+
+/**
+ * 吊销某用户的全部登录会话（管理员操作）。
+ *
+ * 与重置密码不同：不改动密码，适用于"token 疑似泄漏 / 临时冻结"场景 ——
+ * 吊销时刻之前签发的 token 在 verifyToken 中一律被拒，用户需重新登录。
+ * 操作本身落审计（__auth_revoke），可在登录历史中追溯。
+ */
+export function revokeUserTokens(userId: string): boolean {
+  const u = users.find((x) => x.id === userId);
+  if (!u) return false;
+  u.tokenRevokedBefore = Date.now();
+  save();
+  for (const [t, s] of tokenCache) {
+    if (s.userId === u.id) tokenCache.delete(t);
+  }
+  try {
+    appendAuditEntry({
+      userId: currentSession.userId || "unknown",
+      workerId: undefined,
+      toolName: "__auth_revoke",
+      toolCallId: undefined,
+      phase: "call",
+      input: { targetUserId: u.id, username: u.username, ok: true },
+    });
+  } catch { /* 审计失败不影响吊销 */ }
+  return true;
 }
 
 /**

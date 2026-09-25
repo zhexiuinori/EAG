@@ -24,6 +24,7 @@ import type { AgentAdapter, AgentSession } from "../adapters/types.ts";
 import type {
   AgentEvent, AgentKind, ResolvedModelRef, Worker, ChatAttachment,
   WorkerAssignInput, WorkerCreateInput, WorkerUpdateInput,
+  WorkerArchiveInput, WorkerCloneInput, WorkerRollbackInput,
 } from "../../shared/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,7 @@ export function listWorkersForUser(userId: string): Worker[] {
   const myGroupIds = groupService.listGroupIdsForUser(userId);
   const all = loadAll();
   return all.filter((w) => {
+    if (w.archivedAt) return false; // 归档不删除：用户侧不可见，但记录保留
     if (w.type === "project") return true;
     if (workerAssignees(w).includes(userId)) return true;
     const gids = w.assignedGroupIds ?? [];
@@ -178,12 +180,137 @@ export function removeGroupFromAssignments(groupId: string): void {
   if (dirty) saveAll(workers);
 }
 
+/** 配置版本历史上限（超出丢弃最旧版本）。 */
+const CONFIG_HISTORY_LIMIT = 10;
+
 export function updateWorker(input: WorkerUpdateInput): Worker | undefined {
   const workers = loadAll();
   const idx = workers.findIndex((w) => w.id === input.id);
   if (idx === -1) return undefined;
-  workers[idx] = { ...workers[idx], ...input.patch, updatedAt: new Date().toISOString() };
+  const prev = workers[idx];
+  const next: Worker = { ...prev, ...input.patch, updatedAt: new Date().toISOString() };
+  // 配置版本治理：配置变更时快照旧版（新→旧，上限 CONFIG_HISTORY_LIMIT），可回滚
+  if (input.patch.config && JSON.stringify(input.patch.config) !== JSON.stringify(prev.config)) {
+    next.configHistory = [
+      {
+        replacedAt: new Date().toISOString(),
+        operatorId: userService.getSession().userId || undefined,
+        config: prev.config,
+      },
+      ...(prev.configHistory ?? []),
+    ].slice(0, CONFIG_HISTORY_LIMIT);
+  }
+  workers[idx] = next;
   saveAll(workers);
+  return workers[idx];
+}
+
+/**
+ * 归档 / 恢复（对齐 AgentTeams 的 archive-not-delete）：
+ * 归档即停用并对用户侧隐藏，记录保留可恢复；归档/恢复都写审计。
+ */
+export function archiveWorker(input: WorkerArchiveInput): Worker | undefined {
+  const workers = loadAll();
+  const idx = workers.findIndex((w) => w.id === input.id);
+  if (idx === -1) return undefined;
+  if (input.archived) stopWorker(input.id);
+  const now = new Date().toISOString();
+  const next: Worker = { ...workers[idx], updatedAt: now };
+  if (input.archived) next.archivedAt = now;
+  else delete next.archivedAt;
+  workers[idx] = next;
+  saveAll(workers);
+  try {
+    auditApi.appendAuditEntry({
+      userId: userService.getSession().userId,
+      workerId: input.id,
+      toolName: "__worker_archive",
+      toolCallId: undefined,
+      phase: "call",
+      input: { archived: input.archived, name: next.name },
+    });
+  } catch {
+    // 审计失败不影响归档本身
+  }
+  return workers[idx];
+}
+
+/**
+ * 克隆 Worker（模板化复制）：配置与分配随副本，会话/用量/版本历史不带。
+ * 用于"以某个成熟 Agent 为模板快速复制一个"。
+ */
+export function cloneWorker(input: WorkerCloneInput): Worker | undefined {
+  const workers = loadAll();
+  const src = workers.find((w) => w.id === input.id);
+  if (!src) return undefined;
+  const now = new Date().toISOString();
+  const copy: Worker = {
+    ...src,
+    id: `w-${Date.now()}`,
+    name: input.name?.trim() || `${src.name}（副本）`,
+    status: "stopped",
+    config: JSON.parse(JSON.stringify(src.config)) as Worker["config"],
+    createdAt: now,
+    updatedAt: now,
+  };
+  delete copy.archivedAt;
+  delete copy.configHistory;
+  workers.push(copy);
+  saveAll(workers);
+  try {
+    auditApi.appendAuditEntry({
+      userId: userService.getSession().userId,
+      workerId: copy.id,
+      toolName: "__worker_clone",
+      toolCallId: undefined,
+      phase: "call",
+      input: { fromWorkerId: src.id, fromName: src.name, name: copy.name },
+    });
+  } catch {
+    // 审计失败不影响克隆本身
+  }
+  return copy;
+}
+
+/**
+ * 回滚到某个历史配置版本（versionIndex = configHistory 下标，0=最近一版）。
+ * 回滚前把当前配置也快照进历史，因此回滚本身可再回滚。
+ */
+export function rollbackWorkerConfig(input: WorkerRollbackInput): Worker | undefined {
+  const workers = loadAll();
+  const idx = workers.findIndex((w) => w.id === input.id);
+  if (idx === -1) return undefined;
+  const w = workers[idx];
+  const history = w.configHistory ?? [];
+  const target = history[input.versionIndex];
+  if (!target) return undefined;
+  const now = new Date().toISOString();
+  workers[idx] = {
+    ...w,
+    config: target.config,
+    configHistory: [
+      {
+        replacedAt: now,
+        operatorId: userService.getSession().userId || undefined,
+        config: w.config,
+      },
+      ...history,
+    ].slice(0, CONFIG_HISTORY_LIMIT),
+    updatedAt: now,
+  };
+  saveAll(workers);
+  try {
+    auditApi.appendAuditEntry({
+      userId: userService.getSession().userId,
+      workerId: w.id,
+      toolName: "__worker_config_rollback",
+      toolCallId: undefined,
+      phase: "call",
+      input: { versionIndex: input.versionIndex, rolledBackTo: target.replacedAt, name: w.name },
+    });
+  } catch {
+    // 审计失败不影响回滚本身
+  }
   return workers[idx];
 }
 

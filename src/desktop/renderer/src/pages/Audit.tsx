@@ -15,6 +15,8 @@ export default function Audit() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [date, setDate] = useState(today());
   const [search, setSearch] = useState("");
+  const [userFilter, setUserFilter] = useState("");
+  const [workerFilter, setWorkerFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -36,11 +38,17 @@ export default function Audit() {
     setVerifying(false);
   };
 
-  const load = useCallback(async (d: string, q?: string) => {
+  const load = useCallback(async (d: string, q?: string, u?: string, w?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const r = await ipc.auditList({ date: d, search: q || undefined, limit: 1000 });
+      const r = await ipc.auditList({
+        date: d,
+        search: q || undefined,
+        userId: u || undefined,
+        workerId: w || undefined,
+        limit: 1000,
+      });
       setEntries(r.entries as AuditEntry[]);
     } catch (e) {
       setError(String(e));
@@ -72,6 +80,58 @@ export default function Audit() {
     }
   };
 
+  // CSV 导出（当前筛选条件；带 BOM 方便 Excel 直接打开中文）
+  const exportCsv = async () => {
+    try {
+      const r = await ipc.auditList({
+        date,
+        search: search || undefined,
+        userId: userFilter || undefined,
+        workerId: workerFilter || undefined,
+        limit: 10000,
+      });
+      const list = r.entries as AuditEntry[];
+      const cell = (v: unknown): string => {
+        const s = v == null ? "" : String(v);
+        return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const statusOf = (e: AuditEntry): string =>
+        e.toolName === "__content_guardrail"
+          ? "疑似泄露"
+          : e.isError
+            ? "错误"
+            : e.reason
+              ? "已拦截"
+              : "正常";
+      const targetOf = (e: AuditEntry): string => {
+        const input = (e.input ?? {}) as Record<string, unknown>;
+        return (
+          (typeof input.path === "string" && input.path) ||
+          (typeof input.command === "string" && input.command) ||
+          ""
+        );
+      };
+      const header = ["timestamp", "userId", "workerId", "toolName", "phase", "target", "status", "reason", "costUsd"];
+      const rows = list.map((e) =>
+        [e.timestamp, e.userId, e.workerId ?? "", e.toolName, e.phase, targetOf(e), statusOf(e), e.reason ?? "", e.costUsd ?? ""]
+          .map(cell)
+          .join(","),
+      );
+      // 前缀 BOM（U+FEFF）：让 Excel 按 UTF-8 打开，中文不乱码
+      const csv = String.fromCharCode(0xfeff) + [header.join(","), ...rows].join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-${date}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`已导出 ${list.length} 条记录（CSV）`);
+    } catch (e) {
+      toast.error(`导出失败：${e}`);
+    }
+  };
+
   return (
     <PageShell
       title="Audit"
@@ -83,6 +143,9 @@ export default function Audit() {
           </Button>
           <Button onClick={exportJson} icon={<IconList size={13} />}>
             导出 JSON
+          </Button>
+          <Button onClick={exportCsv} icon={<IconList size={13} />}>
+            导出 CSV
           </Button>
         </>
       }
@@ -98,7 +161,7 @@ export default function Audit() {
         </div>
 
         {/* 筛选 */}
-        <div className="shrink-0 flex items-center gap-2">
+        <div className="shrink-0 flex items-center gap-2 flex-wrap">
           <input
             type="date"
             value={date}
@@ -106,16 +169,42 @@ export default function Audit() {
             className="field w-[150px]"
           />
           <input
+            value={userFilter}
+            onChange={(e) => setUserFilter(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && load(date, search, userFilter, workerFilter)}
+            placeholder="用户 ID（精确）"
+            list="audit-user-options"
+            className="field w-[130px]"
+          />
+          <input
+            value={workerFilter}
+            onChange={(e) => setWorkerFilter(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && load(date, search, userFilter, workerFilter)}
+            placeholder="Worker ID（精确）"
+            list="audit-worker-options"
+            className="field w-[140px]"
+          />
+          <datalist id="audit-user-options">
+            {[...new Set(entries.map((e) => e.userId).filter(Boolean))].map((u) => (
+              <option key={u} value={u} />
+            ))}
+          </datalist>
+          <datalist id="audit-worker-options">
+            {[...new Set(entries.map((e) => e.workerId).filter((w): w is string => Boolean(w)))].map((w) => (
+              <option key={w} value={w} />
+            ))}
+          </datalist>
+          <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load(date, search)}
+            onKeyDown={(e) => e.key === "Enter" && load(date, search, userFilter, workerFilter)}
             placeholder="搜索命令、路径、用户…"
             className="field flex-1 min-w-0"
           />
-          <Button variant="primary" onClick={() => load(date, search)} icon={<IconSearch size={13} />}>
+          <Button variant="primary" onClick={() => void load(date, search, userFilter, workerFilter)} icon={<IconSearch size={13} />}>
             搜索
           </Button>
-          <Button onClick={() => { setDate(today()); setSearch(""); void load(today()); }}>
+          <Button onClick={() => { setDate(today()); setSearch(""); setUserFilter(""); setWorkerFilter(""); void load(today()); }}>
             今天
           </Button>
         </div>
