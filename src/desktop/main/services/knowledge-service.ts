@@ -265,7 +265,7 @@ export async function ingest(
   if (!c) return { ok: false, error: `知识库「${input.collectionId}」不存在` };
 
   let text = input.text ?? "";
-  let source = input.path;
+  const source = input.path;
   if (!text && input.path) {
     try {
       text = fs.readFileSync(input.path, "utf-8");

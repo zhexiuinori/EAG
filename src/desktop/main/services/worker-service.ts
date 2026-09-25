@@ -458,7 +458,7 @@ function saveAttachments(
 
     try {
       fs.mkdirSync(dir, { recursive: true });
-      const safe = name.replace(/[^\w.\-]+/g, "_");
+      const safe = name.replace(/[^\w.-]+/g, "_");
       const file = path.join(dir, `${Date.now().toString(36)}-${safe}`);
       fs.writeFileSync(file, buf);
       out.push({ path: file, note: `（${a.mime}，${(buf.length / 1024).toFixed(0)} KB）` });

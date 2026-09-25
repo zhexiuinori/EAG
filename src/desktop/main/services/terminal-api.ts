@@ -42,6 +42,7 @@ const MAX_BUFFER = 256 * 1024;
 // ---------------------------------------------------------------------------
 
 /** 去掉 ANSI 转义与 CR，保留纯文本。 */
+/* eslint-disable no-control-regex -- 这里必须匹配 ANSI 转义控制字符，属于有意为之 */
 function sanitize(raw: string): string {
   return raw
     .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "")
@@ -50,6 +51,7 @@ function sanitize(raw: string): string {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
 }
+/* eslint-enable no-control-regex */
 
 function emit(sessionId: string, text: string): void {
   sendToRenderer(TERMINAL_EVENT, { sessionId, text });

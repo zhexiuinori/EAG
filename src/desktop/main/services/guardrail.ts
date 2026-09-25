@@ -25,7 +25,7 @@ function maskSample(value: string): string {
 }
 
 // 常见 API 密钥前缀（OpenAI / Anthropic / 通用 sk- / xox / ghp 等）
-const API_KEY_PATTERN = /(?:sk-[A-Za-z0-9_\-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{20,})/g;
+const API_KEY_PATTERN = /(?:sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g;
 
 // PEM/DSA/OpenSSH 私钥块
 const PRIVATE_KEY_PATTERN = /-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g;
