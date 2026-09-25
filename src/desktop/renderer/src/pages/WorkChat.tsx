@@ -1076,9 +1076,13 @@ export default function WorkChat() {
               {session?.title ?? "…"}
             </button>
           )}
-          <div className="text-[10.5px] text-fg-faint truncate leading-tight">
+          <button
+            onClick={() => nav(`/app/agent/${workerId}`)}
+            title="查看助手主页（进度 / 文件 / 变更 / 用量）"
+            className="text-[10.5px] text-fg-faint truncate leading-tight text-left hover:text-primary transition-colors"
+          >
             {worker?.name ?? workerId}
-          </div>
+          </button>
         </div>
 
         {/* 模型：只影响"本 Agent + 我"，不写全局默认（管理员在 Models 页维护 Provider 池，

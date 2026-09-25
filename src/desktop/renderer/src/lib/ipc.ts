@@ -102,6 +102,18 @@ export function setAuthToken(token: string): void {
   }
 }
 
+/**
+ * 401 统一拦截：token 过期/失效（token 已有 12h TTL，过期是常态）时，
+ * 清掉本地凭证并引导回登录页（带 from 回跳 + expired 提示），
+ * 避免各页面各自静默坏掉。登录接口本身走裸 fetch，不经这里。
+ */
+function redirectToLoginOn401(): void {
+  clearAuthToken();
+  const here = window.location.pathname + window.location.search;
+  if (window.location.pathname.startsWith("/login")) return;
+  window.location.href = `/login?from=${encodeURIComponent(here)}&expired=1`;
+}
+
 async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = currentToken();
   const uid = currentUserId();
@@ -114,6 +126,7 @@ async function http<T>(method: string, path: string, body?: unknown): Promise<T>
     },
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) redirectToLoginOn401();
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status}: ${text || res.statusText}`.slice(0, 300));
@@ -174,6 +187,7 @@ export const workspaceChatSend = (i: WorkspaceChatSendInput, onEvent?: (ev: Agen
           planOnly: i.planOnly === true,
         }),
       });
+      if (res.status === 401) redirectToLoginOn401();
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200) || res.statusText}`);

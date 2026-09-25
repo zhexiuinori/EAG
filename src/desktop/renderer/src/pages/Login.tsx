@@ -25,6 +25,8 @@ export default function Login() {
   const from = params.get("from");
   const safeFrom =
     from && from.startsWith("/") && !from.startsWith("//") ? from : null;
+  // token 过期被 401 拦截跳回时带 expired=1：给出明确提示，而非让用户对着登录页发懵
+  const expired = params.get("expired") === "1";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -69,6 +71,12 @@ export default function Login() {
           <h1 className="text-[18px] font-semibold text-fg tracking-tight">Enterprise Agent Governance</h1>
           <p className="text-[12px] text-fg-subtle mt-1">登录以继续使用</p>
         </div>
+
+        {expired && (
+          <div className="mb-4 rounded-lg border border-primary-border bg-primary-bg px-3.5 py-2.5 text-[12px] text-fg">
+            登录已过期（会话有效期 12 小时），请重新登录。登录后会回到你刚才的页面。
+          </div>
+        )}
 
         <form
           onSubmit={submit}
