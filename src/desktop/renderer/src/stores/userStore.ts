@@ -3,7 +3,7 @@ import * as ipc from "../lib/ipc.ts";
 import { useWorkerStore } from "./workerStore.ts";
 import { useTaskStore } from "./taskStore.ts";
 import { useApprovalStore } from "./approvalStore.ts";
-import type { AuthSession, User } from "@shared/types.ts";
+import type { AuthSession, AuthLoginOutcome, User } from "@shared/types.ts";
 
 /**
  * 用户与身份状态。
@@ -31,8 +31,8 @@ interface UserState {
   loading: boolean;
 
   load: (force?: boolean) => Promise<void>;
-  /** 账号密码登录；成功后持久化 session/token 并刷新各数据层 */
-  login: (username: string, password: string) => Promise<AuthSession | undefined>;
+  /** 账号密码登录；成功后持久化 session/token 并刷新各数据层。失败返回可判别原因（凭证错误 / 锁定）。 */
+  login: (username: string, password: string) => Promise<AuthLoginOutcome>;
   /** 退出登录：清 token / 本地身份，回到登录页 */
   logout: () => Promise<void>;
   /** 修改自己的密码（需旧密码）；成功后自动续期凭证 */
@@ -72,7 +72,7 @@ export const useUserStore = create<UserState>((set, get) => ({
   login: async (username, password) => {
     try {
       const r = await ipc.authLogin({ username, password });
-      if (!r) return undefined;
+      if (!r.ok) return r;
       persistCurrentUser(r.session.userId);
       set({ session: r.session, loaded: true, loading: false });
       // 身份确定：Agent 可见性、会话、任务与审批都按新用户加载
@@ -80,9 +80,9 @@ export const useUserStore = create<UserState>((set, get) => ({
       void useWorkerStore.getState().loadMine(true);
       void useTaskStore.getState().load();
       void useApprovalStore.getState().load();
-      return r.session;
+      return r;
     } catch {
-      return undefined;
+      return { ok: false, reason: "bad_credentials" };
     }
   },
 

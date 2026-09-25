@@ -143,7 +143,17 @@ export interface AuthSession {
 export interface AuthLoginResult {
   session: AuthSession;
   token: string;
+  /** 仍在使用初始默认口令（admin123）：前端应提示尽快修改。 */
+  passwordWeak?: boolean;
 }
+/**
+ * 登录结果（可判别）：
+ *   ok=true  → 会话 + token
+ *   ok=false → bad_credentials（凭证错误）| locked（失败次数过多锁定，含剩余秒数）
+ */
+export type AuthLoginOutcome =
+  | ({ ok: true } & AuthLoginResult)
+  | { ok: false; reason: "bad_credentials" | "locked"; retryAfterSec?: number };
 /** 修改自己的密码：需校验旧密码，成功后签发新 token（旧 token 立即失效）。 */
 export interface ChangePasswordInput {
   oldPassword: string;

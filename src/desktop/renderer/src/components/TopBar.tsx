@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import * as ipc from "../lib/ipc.ts";
+import { passwordPolicyOk, PASSWORD_POLICY_LABEL } from "../lib/password.ts";
 import {
   IconChevronRight, IconCheck,
   IconSun, IconMoon, IconMonitor, IconInbox, IconLogout, IconEdit, IconBell,
@@ -345,7 +346,7 @@ export default function TopBar({ isAdmin }: Props) {
             <Button onClick={() => setShowChangePwd(false)}>取消</Button>
             <Button
               variant="primary"
-              disabled={pwdBusy || pwdOld.length === 0 || pwdNew.length < 6 || pwdConfirm !== pwdNew}
+              disabled={pwdBusy || pwdOld.length === 0 || !passwordPolicyOk(pwdNew) || pwdConfirm !== pwdNew}
               onClick={async () => {
                 setPwdBusy(true);
                 const ok = await changePassword(pwdOld, pwdNew);
@@ -354,7 +355,7 @@ export default function TopBar({ isAdmin }: Props) {
                   toast.success("密码已修改，已自动保持登录");
                   setShowChangePwd(false);
                 } else {
-                  toast.error("修改失败：旧密码不正确，或新密码不足 6 位");
+                  toast.error(`修改失败：旧密码不正确，或新密码不符合策略（${PASSWORD_POLICY_LABEL}）`);
                 }
               }}
             >
@@ -378,14 +379,14 @@ export default function TopBar({ isAdmin }: Props) {
           </div>
           <div>
             <label className="block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-faint mb-1.5">
-              新密码（至少 6 位）
+              新密码（{PASSWORD_POLICY_LABEL}）
             </label>
             <input
               type="password"
               value={pwdNew}
               onChange={(e) => setPwdNew(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !pwdBusy && pwdOld && pwdNew.length >= 6 && pwdConfirm === pwdNew) {
+                if (e.key === "Enter" && !pwdBusy && pwdOld && passwordPolicyOk(pwdNew) && pwdConfirm === pwdNew) {
                   (e.target as HTMLInputElement).closest("form")?.requestSubmit();
                 }
               }}
@@ -401,7 +402,7 @@ export default function TopBar({ isAdmin }: Props) {
               value={pwdConfirm}
               onChange={(e) => setPwdConfirm(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !pwdBusy && pwdOld && pwdNew.length >= 6 && pwdConfirm === pwdNew) {
+                if (e.key === "Enter" && !pwdBusy && pwdOld && passwordPolicyOk(pwdNew) && pwdConfirm === pwdNew) {
                   (e.target as HTMLInputElement).closest("form")?.requestSubmit();
                 }
               }}

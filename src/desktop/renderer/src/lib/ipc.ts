@@ -17,7 +17,7 @@ import type {
   WorkerListResult, WorkerCreateInput, WorkerUpdateInput, WorkerAssignInput,
   UserGroup, GroupListResult, GroupUpsertInput, GroupDeleteInput,
   UserListResult, UserCreateInput, UserUpdateInput, UserDeleteInput, AuthSession, AuthLoginInput, AuthLoginResult,
-  ChangePasswordInput,
+  AuthLoginOutcome, ChangePasswordInput,
   McpListResult, McpServerView, McpUpsertInput, McpDeleteInput, McpToolsInput, McpToolsResult,
   McpCallInput, McpCallResult,
   KnowledgeCollection, KnowledgeListResult, KnowledgeUpsertInput, KnowledgeDeleteInput,
@@ -280,13 +280,25 @@ export const userDelete = (i: UserDeleteInput) =>
 
 // -- Auth --
 export const authLogin = (i: AuthLoginInput) =>
-  call<AuthLoginResult | undefined>(
+  call<AuthLoginOutcome>(
     IPC_CHANNELS.AUTH_LOGIN,
-    () => invokeIPC<AuthLoginResult | undefined>(IPC_CHANNELS.AUTH_LOGIN, i),
-    async () => {
-      const r = await httpPost<AuthLoginResult | undefined>("/auth/login", i);
+    () => invokeIPC<AuthLoginOutcome>(IPC_CHANNELS.AUTH_LOGIN, i),
+    async (): Promise<AuthLoginOutcome> => {
+      // 登录接口需要区分 401（凭证错误）/ 423（锁定），httpPost 会把非 2xx 抛成
+      // 笼统 Error，丢失状态码 —— 这里直接 fetch，按状态码映射为可判别结果。
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(i),
+      });
+      if (res.status === 423) {
+        const data = (await res.json().catch(() => ({}))) as { retryAfterSec?: number };
+        return { ok: false, reason: "locked", retryAfterSec: data?.retryAfterSec };
+      }
+      if (!res.ok) return { ok: false, reason: "bad_credentials" };
+      const r = (await res.json()) as AuthLoginResult;
       if (r?.token) setAuthToken(r.token);
-      return r;
+      return { ok: true, ...r };
     },
   );
 /** 修改自己的密码（需旧密码）。成功返回新凭证，旧 token 立即失效。 */

@@ -17,10 +17,28 @@ import { PROJECT_ROOT } from "../paths.ts";
 import { appendAuditEntry } from "./audit-api.ts";
 import type {
   User, UserRecord, UserCreateInput, UserUpdateInput,
-  AuthSession, AuthLoginInput, AuthLoginResult,
+  AuthSession, AuthLoginInput, AuthLoginResult, AuthLoginOutcome,
 } from "../../shared/types.ts";
 
-const USERS_DIR = path.join(PROJECT_ROOT, "users");
+// ---------------------------------------------------------------------------
+// 密码策略
+// ---------------------------------------------------------------------------
+
+/** 初始默认口令：登录时命中即提示用户尽快修改（不阻断登录，避免锁死唯一管理员）。 */
+export const INITIAL_PASSWORD = "admin123";
+
+/**
+ * 密码策略：至少 8 位，且必须同时包含字母和数字。
+ * 返回错误文案；通过时返回 null。createUser / updateUser / changePassword 统一走这里。
+ */
+export function passwordPolicyError(password: string | undefined | null): string | null {
+  if (!password || password.length < 8) return "密码至少 8 位";
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return "密码需同时包含字母和数字";
+  return null;
+}
+
+// EAG_USERS_DIR 仅供测试隔离使用（与 EAG_AUDIT_DIR / EAG_APPROVAL_DIR 同模式）
+const USERS_DIR = process.env.EAG_USERS_DIR || path.join(PROJECT_ROOT, "users");
 
 function usersFile(): string {
   return path.join(USERS_DIR, "users.json");
@@ -147,7 +165,8 @@ export function toSession(u: UserRecord): AuthSession {
 
 export function createUser(input: UserCreateInput): User {
   if (!input.username?.trim()) throw new Error("用户名不能为空");
-  if (!input.password || input.password.length < 6) throw new Error("密码至少 6 位");
+  const pwErr = passwordPolicyError(input.password);
+  if (pwErr) throw new Error(pwErr);
   if (users.some((u) => u.username === input.username.trim())) {
     throw new Error(`用户名「${input.username.trim()}」已存在`);
   }
@@ -173,7 +192,8 @@ export function updateUser(input: UserUpdateInput): User | undefined {
   if (input.canManageConsole !== undefined) u.canManageConsole = input.canManageConsole;
   // 改密码：重算哈希 → 旧 token 立即失效（token 指纹含密码哈希）
   if (input.password) {
-    if (input.password.length < 6) throw new Error("密码至少 6 位");
+    const pwErr = passwordPolicyError(input.password);
+    if (pwErr) throw new Error(pwErr);
     u.passwordHash = hashPassword(input.password);
   }
   save();
@@ -192,16 +212,25 @@ export function deleteUser(id: string): boolean {
       ? toSession(fallback)
       : { userId: "", userName: "", username: "", role: "user", canManageConsole: false };
   }
-  tokenCache.delete(mkTokenKey(removed.id, removed));
+  // 清掉该用户的缓存会话（缓存按 token 字符串为键，需按会话归属扫描）
+  for (const [t, s] of tokenCache) {
+    if (s.userId === removed.id) tokenCache.delete(t);
+  }
   return true;
 }
 
 // ---------------------------------------------------------------------------
 // 登录 / 会话 / token
 //
-// token = base64url(userId) + "." + base64url(sha256(userId|username|passwordHash))
-// 进程内可完全验证；改密/删号即失效（无需全局存储失效表）。
+// token = base64url(userId) + "." + base64url(issuedAtMs) + "." + base64url(HMAC)
+// HMAC 输入含 TOKEN_SECRET|userId|username|passwordHash|issuedAtMs：
+//   · 进程内可完全验证（无需服务端存储会话表）
+//   · 改密/删号后指纹不匹配 → 旧 token 立即失效
+//   · 绝对有效期 TOKEN_TTL_MS（默认 12h），过期即拒，旧两段式 token 一律拒绝
 // ---------------------------------------------------------------------------
+
+/** token 绝对有效期：12 小时。到期后需重新登录。 */
+export const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
 /**
  * Token 签名密钥：**持久化到磁盘**，而不是每次启动随机生成。
@@ -227,16 +256,21 @@ const TOKEN_SECRET = (() => {
 })();
 const tokenCache = new Map<string, AuthSession>();
 
-function mkTokenKey(userId: string, u: UserRecord): string {
+function mkTokenKey(userId: string, u: UserRecord, issuedAtMs: number): string {
   return crypto
     .createHash("sha256")
-    .update(`${TOKEN_SECRET}|${userId}|${u.username}|${u.passwordHash}`)
+    .update(`${TOKEN_SECRET}|${userId}|${u.username}|${u.passwordHash}|${issuedAtMs}`)
     .digest("hex");
 }
 
 function issueToken(u: UserRecord): string {
-  const key = mkTokenKey(u.id, u);
-  const token = `${Buffer.from(u.id).toString("base64url")}.${Buffer.from(key).toString("base64url")}`;
+  const issuedAt = Date.now();
+  const key = mkTokenKey(u.id, u, issuedAt);
+  const token = [
+    Buffer.from(u.id).toString("base64url"),
+    Buffer.from(String(issuedAt)).toString("base64url"),
+    Buffer.from(key).toString("base64url"),
+  ].join(".");
   tokenCache.set(token, toSession(u));
   return token;
 }
@@ -244,11 +278,18 @@ function issueToken(u: UserRecord): string {
 export function verifyToken(token: string | undefined | null): AuthSession | undefined {
   if (!token) return undefined;
   try {
-    const [uEnc, kEnc] = token.split(".");
+    const parts = token.split(".");
+    // 旧两段式 token（无签发时间）一律拒绝：无法判断签发时刻，不可信
+    if (parts.length !== 3) return undefined;
+    const [uEnc, tEnc, kEnc] = parts;
+    const issuedAt = Number(Buffer.from(tEnc, "base64url").toString("utf8"));
+    // 签发时间必须是合法数字、不晚于现在（容忍 5 分钟时钟偏差）、且未过期
+    if (!Number.isFinite(issuedAt) || issuedAt > Date.now() + 5 * 60 * 1000) return undefined;
+    if (Date.now() - issuedAt > TOKEN_TTL_MS) return undefined;
     const u = users.find((x) => x.id === Buffer.from(uEnc, "base64url").toString("utf8"));
     if (!u) return undefined;
     // 哈希指纹含 passwordHash：改密/删号后指纹不匹配 → 旧 token 立即失效
-    const key = mkTokenKey(u.id, u);
+    const key = mkTokenKey(u.id, u, issuedAt);
     if (key !== Buffer.from(kEnc, "base64url").toString("utf8")) {
       // 清理可能残留的缓存
       tokenCache.delete(token);
@@ -262,37 +303,63 @@ export function verifyToken(token: string | undefined | null): AuthSession | und
   }
 }
 
-export function login(input: AuthLoginInput): AuthLoginResult | undefined {
-  const u = users.find((x) => x.username === input.username.trim());
-  if (!u || !verifyPassword(input.password, u.passwordHash)) {
-    // 登录失败也进审计（治理平台需要知道谁在尝试登录）
-    try {
-      appendAuditEntry({
-        userId: input.username ?? "unknown",
-        workerId: undefined,
-        toolName: "__auth_login",
-        toolCallId: undefined,
-        phase: "call",
-        input: { username: input.username, ok: false },
-        isError: true,
-        reason: "用户名或密码错误",
-      });
-    } catch { /* 审计失败不影响登录 */ }
-    return undefined;
-  }
-  const session = toSession(u);
-  currentSession = session; // 桌面 IPC 会话
+// ---------------------------------------------------------------------------
+// 登录限流：同一用户名连续失败 LOGIN_MAX_FAILURES 次 → 锁定 LOGIN_LOCK_MS。
+// 内存态计数（重启清零，单机架构下够用）；成功登录立即清零。
+// ---------------------------------------------------------------------------
+
+export const LOGIN_MAX_FAILURES = 5;
+export const LOGIN_LOCK_MS = 15 * 60 * 1000;
+
+const loginFailures = new Map<string, { count: number; lockedUntil: number }>();
+
+function auditLogin(userId: string, username: string, ok: boolean, reason?: string): void {
   try {
     appendAuditEntry({
-      userId: u.id,
+      userId,
       workerId: undefined,
       toolName: "__auth_login",
       toolCallId: undefined,
       phase: "call",
-      input: { username: u.username, ok: true },
+      input: { username, ok },
+      isError: !ok,
+      reason,
     });
   } catch { /* 审计失败不影响登录 */ }
-  return { session, token: issueToken(u) };
+}
+
+export function login(input: AuthLoginInput): AuthLoginOutcome {
+  const username = input.username.trim();
+  const fail = loginFailures.get(username);
+  if (fail && fail.lockedUntil > Date.now()) {
+    const retryAfterSec = Math.ceil((fail.lockedUntil - Date.now()) / 1000);
+    auditLogin(username, username, false, `账号已锁定（剩余 ${retryAfterSec}s）`);
+    return { ok: false, reason: "locked", retryAfterSec };
+  }
+  const u = users.find((x) => x.username === username);
+  if (!u || !verifyPassword(input.password, u.passwordHash)) {
+    // 登录失败也进审计（治理平台需要知道谁在尝试登录）
+    auditLogin(username || "unknown", username, false, "用户名或密码错误");
+    const rec = loginFailures.get(username) ?? { count: 0, lockedUntil: 0 };
+    rec.count += 1;
+    if (rec.count >= LOGIN_MAX_FAILURES) {
+      rec.lockedUntil = Date.now() + LOGIN_LOCK_MS;
+      auditLogin(username, username, false, `连续失败 ${rec.count} 次，账号锁定 ${LOGIN_LOCK_MS / 60000} 分钟`);
+    }
+    loginFailures.set(username, rec);
+    return { ok: false, reason: "bad_credentials" };
+  }
+  loginFailures.delete(username); // 成功登录清零失败计数
+  const session = toSession(u);
+  currentSession = session; // 桌面 IPC 会话
+  auditLogin(u.id, u.username, true);
+  return {
+    ok: true,
+    session,
+    token: issueToken(u),
+    // 仍在使用初始默认口令：提示（不阻断）用户尽快修改
+    passwordWeak: verifyPassword(INITIAL_PASSWORD, u.passwordHash),
+  };
 }
 
 /**
@@ -308,7 +375,7 @@ export function changePassword(
 ): AuthLoginResult | undefined {
   const u = users.find((x) => x.id === userId);
   if (!u || !verifyPassword(oldPassword, u.passwordHash)) return undefined;
-  if (!newPassword || newPassword.length < 6) return undefined;
+  if (passwordPolicyError(newPassword)) return undefined;
   u.passwordHash = hashPassword(newPassword);
   save();
   const session = toSession(u);

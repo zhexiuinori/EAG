@@ -31,12 +31,21 @@ export default function Login() {
     if (!username.trim() || !password || busy) return;
     setBusy(true);
     try {
-      const session = await login(username.trim(), password);
-      if (!session) {
-        toast.error("用户名或密码错误");
+      const outcome = await login(username.trim(), password);
+      if (!outcome.ok) {
+        if (outcome.reason === "locked") {
+          const min = Math.max(1, Math.ceil((outcome.retryAfterSec ?? 900) / 60));
+          toast.error(`失败次数过多，账号已临时锁定，请约 ${min} 分钟后重试`);
+        } else {
+          toast.error("用户名或密码错误");
+        }
         return;
       }
+      const session = outcome.session;
       toast.success(`欢迎，${session.userName}`);
+      if (outcome.passwordWeak) {
+        toast.error("您仍在使用初始密码 admin123，请尽快在「设置 → 账户」中修改");
+      }
       // 优先级：原本要去的页面 > 管理员默认管理页 > 普通用户工作区
       if (safeFrom) {
         nav(safeFrom, { replace: true });
