@@ -1,0 +1,62 @@
+{
+  "providers": [
+    {
+      "id": "claude-router",
+      "name": "Claude (Router)",
+      "type": "anthropic",
+      "baseUrl": "https://anyrouter.top",
+      "apiKey": "${EAG_API_KEY_CLAUDE_ROUTER}",
+      "models": [
+        "claude-fable-5[1M]",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-5",
+        "claude-opus-4-5"
+      ],
+      "activeModel": "claude-haiku-4-5-20251001"
+    },
+    {
+      "id": "ollama-local",
+      "name": "Ollama (Local)",
+      "type": "ollama",
+      "baseUrl": "http://localhost:11434",
+      "models": [
+        "llama3.2",
+        "qwen2.5",
+        "mistral",
+        "codellama"
+      ],
+      "activeModel": "llama3.2",
+      "isDefault": true
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "type": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "${EAG_API_KEY_OPENAI}",
+      "models": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "gpt-3.5-turbo"
+      ],
+      "activeModel": "gpt-4o-mini"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "type": "deepseek",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "${EAG_API_KEY_DEEPSEEK}",
+      "models": [
+        "deepseek-chat",
+        "deepseek-reasoner"
+      ],
+      "activeModel": "deepseek-chat"
+    }
+  ],
+  "activeProviderId": "claude-router",
+  "searchProxy": "",
+  "maxWorkers": 5,
+  "taskTimeoutMs": 600000
+}

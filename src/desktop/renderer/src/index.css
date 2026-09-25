@@ -1,0 +1,461 @@
+@import "tailwindcss";
+
+/* ===========================================================================
+   主题变量层
+   ---------------------------------------------------------------------------
+   所有颜色都收敛为 --eag-* 变量：
+     · :root            暗色（默认）
+     · html.theme-light 亮色（覆盖同一批变量）
+   工具类通过下方 @theme inline 引用这些变量，因此切换主题 = 换一批变量值，
+   无需改动任何组件代码。参考 QwenPaw 的主题链路（与 color-scheme 联动原生控件）。
+   =========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* 中性灰阶：暗色（白 → 黑） */
+  --eag-n-0: #ffffff;
+  --eag-n-50: #f5f5f5;
+  --eag-n-100: #e8e8e8;
+  --eag-n-200: #d0d0d0;
+  --eag-n-300: #ababab;
+  --eag-n-400: #8a8a8a;
+  --eag-n-500: #6b6b6b;
+  --eag-n-600: #4d4d4d;
+  --eag-n-700: #3a3a3a;
+  --eag-n-800: #2a2a2a;
+  --eag-n-850: #262626;
+  --eag-n-900: #1f1f1f;
+  --eag-n-950: #1a1a1a;
+  --eag-n-1000: #141414;
+
+  --eag-base: #141414;
+  --eag-surface: #1a1a1a;
+  --eag-elevated: #1f1f1f;
+  --eag-overlay: #262626;
+  --eag-raised: #2a2a2a;
+
+  --eag-fg: rgba(255, 255, 255, 0.88);
+  --eag-fg-muted: rgba(255, 255, 255, 0.65);
+  --eag-fg-subtle: rgba(255, 255, 255, 0.45);
+  --eag-fg-faint: rgba(255, 255, 255, 0.3);
+
+  --eag-line: rgba(255, 255, 255, 0.08);
+  --eag-line-strong: rgba(255, 255, 255, 0.14);
+
+  --eag-fill-subtle: rgba(255, 255, 255, 0.04);
+  --eag-fill: rgba(255, 255, 255, 0.06);
+  --eag-fill-strong: rgba(255, 255, 255, 0.1);
+
+  --eag-primary-strong: #5b7cfa;
+  --eag-primary: #7a94ff;
+  --eag-primary-bg: rgba(91, 124, 250, 0.14);
+  --eag-primary-border: rgba(91, 124, 250, 0.32);
+  --eag-primary-glow: rgba(91, 124, 250, 0.3);
+
+  --eag-red: #ff5c5c;
+  --eag-red-bg: rgba(255, 92, 92, 0.14);
+  --eag-green: #3ecf8e;
+  --eag-green-bg: rgba(62, 207, 142, 0.14);
+  --eag-yellow: #f5b544;
+  --eag-yellow-bg: rgba(245, 181, 68, 0.14);
+  --eag-blue: #5aa9ff;
+  --eag-blue-bg: rgba(90, 169, 255, 0.14);
+
+  --eag-scrollbar: rgba(255, 255, 255, 0.14);
+  --eag-scrollbar-hover: rgba(255, 255, 255, 0.22);
+  --eag-shimmer-a: rgba(255, 255, 255, 0.03);
+  --eag-shimmer-b: rgba(255, 255, 255, 0.07);
+  --eag-hairline: rgba(255, 255, 255, 0.04);
+}
+
+html.theme-light {
+  color-scheme: light;
+
+  /* 灰阶反转：深色下"白 → 黑"，亮色下"黑 → 白"，保证所有 n-* 用法语义不变 */
+  --eag-n-0: #16181d;
+  --eag-n-50: #1f2229;
+  --eag-n-100: #2a2e36;
+  --eag-n-200: #3a3f49;
+  --eag-n-300: #565c68;
+  --eag-n-400: #6f7683;
+  --eag-n-500: #878e9b;
+  --eag-n-600: #a2a8b3;
+  --eag-n-700: #c3c7cf;
+  --eag-n-800: #dee1e6;
+  --eag-n-850: #e6e8ec;
+  --eag-n-900: #eef0f3;
+  --eag-n-950: #f4f5f7;
+  --eag-n-1000: #fafbfc;
+
+  --eag-base: #f6f7f9;
+  --eag-surface: #ffffff;
+  --eag-elevated: #ffffff;
+  --eag-overlay: #f0f1f4;
+  --eag-raised: #eceef1;
+
+  --eag-fg: rgba(18, 20, 26, 0.92);
+  --eag-fg-muted: rgba(18, 20, 26, 0.72);
+  --eag-fg-subtle: rgba(18, 20, 26, 0.55);
+  --eag-fg-faint: rgba(18, 20, 26, 0.38);
+
+  --eag-line: rgba(18, 20, 26, 0.1);
+  --eag-line-strong: rgba(18, 20, 26, 0.18);
+
+  --eag-fill-subtle: rgba(18, 20, 26, 0.03);
+  --eag-fill: rgba(18, 20, 26, 0.05);
+  --eag-fill-strong: rgba(18, 20, 26, 0.08);
+
+  --eag-primary-strong: #4a6cf7;
+  --eag-primary: #5b7cfa;
+  --eag-primary-bg: rgba(74, 108, 247, 0.1);
+  --eag-primary-border: rgba(74, 108, 247, 0.35);
+  --eag-primary-glow: rgba(74, 108, 247, 0.25);
+
+  --eag-red: #dc3d43;
+  --eag-red-bg: rgba(220, 61, 67, 0.1);
+  --eag-green: #18a058;
+  --eag-green-bg: rgba(24, 160, 88, 0.12);
+  --eag-yellow: #b7791f;
+  --eag-yellow-bg: rgba(183, 121, 31, 0.12);
+  --eag-blue: #2b6fd4;
+  --eag-blue-bg: rgba(43, 111, 212, 0.12);
+
+  --eag-scrollbar: rgba(18, 20, 26, 0.18);
+  --eag-scrollbar-hover: rgba(18, 20, 26, 0.32);
+  --eag-shimmer-a: rgba(18, 20, 26, 0.03);
+  --eag-shimmer-b: rgba(18, 20, 26, 0.06);
+  --eag-hairline: rgba(18, 20, 26, 0.04);
+}
+
+@theme inline {
+  /* 不依赖公网 CDN 字体（离线/不出网环境下外链会失败并违反出网策略） */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  --color-n-0: var(--eag-n-0);
+  --color-n-50: var(--eag-n-50);
+  --color-n-100: var(--eag-n-100);
+  --color-n-200: var(--eag-n-200);
+  --color-n-300: var(--eag-n-300);
+  --color-n-400: var(--eag-n-400);
+  --color-n-500: var(--eag-n-500);
+  --color-n-600: var(--eag-n-600);
+  --color-n-700: var(--eag-n-700);
+  --color-n-800: var(--eag-n-800);
+  --color-n-850: var(--eag-n-850);
+  --color-n-900: var(--eag-n-900);
+  --color-n-950: var(--eag-n-950);
+  --color-n-1000: var(--eag-n-1000);
+
+  --color-base: var(--eag-base);
+  --color-surface: var(--eag-surface);
+  --color-elevated: var(--eag-elevated);
+  --color-overlay: var(--eag-overlay);
+  --color-raised: var(--eag-raised);
+
+  --color-fg: var(--eag-fg);
+  --color-fg-muted: var(--eag-fg-muted);
+  --color-fg-subtle: var(--eag-fg-subtle);
+  --color-fg-faint: var(--eag-fg-faint);
+
+  --color-line: var(--eag-line);
+  --color-line-strong: var(--eag-line-strong);
+
+  --color-fill-subtle: var(--eag-fill-subtle);
+  --color-fill: var(--eag-fill);
+  --color-fill-strong: var(--eag-fill-strong);
+
+  --color-primary-strong: var(--eag-primary-strong);
+  --color-primary: var(--eag-primary);
+  --color-primary-bg: var(--eag-primary-bg);
+  --color-primary-border: var(--eag-primary-border);
+  --color-primary-glow: var(--eag-primary-glow);
+
+  --color-red: var(--eag-red);
+  --color-red-bg: var(--eag-red-bg);
+  --color-green: var(--eag-green);
+  --color-green-bg: var(--eag-green-bg);
+  --color-yellow: var(--eag-yellow);
+  --color-yellow-bg: var(--eag-yellow-bg);
+  --color-blue: var(--eag-blue);
+  --color-blue-bg: var(--eag-blue-bg);
+
+  /* 圆角：克制（4 / 6 / 8 / 10），此前 14px 偏大 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+   基础层
+   ------------------------------------------------------------------------- */
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+    margin: 0;
+  }
+
+  body {
+    background-color: var(--color-base);
+    color: var(--color-fg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--color-primary-strong);
+    outline-offset: 1px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: var(--color-primary-bg);
+    color: #fff;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   布局骨架
+   ------------------------------------------------------------------------- */
+
+/** 页面容器：页头固定 + 内容区独立卡片（管理后台的通用做法） */
+@utility page-container {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+@utility page-header {
+  flex: 0 0 auto;
+  padding: 20px 24px 16px;
+}
+
+/**
+ * 内容区：圆角 + 边框 + 独立滚动。
+ * 相比"内容直接铺在背景上"，这层卡片是页面显得有结构感的关键。
+ */
+@utility page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 16px 16px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-line);
+  background-color: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+   组件工具类
+   --------------------------------------------------------------------------- */
+
+/** 卡片：深色下靠 1px 顶部高光 + 细边框，而非投影 */
+@utility card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-line);
+  background-color: color-mix(in srgb, var(--color-elevated) 90%, transparent);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.03);
+}
+
+@utility card-hover {
+  transition: background-color 150ms ease, border-color 150ms ease;
+
+  &:hover {
+    border-color: var(--color-line-strong);
+    background-color: var(--color-overlay);
+  }
+}
+
+/** 交互行/项：hover 用递增白色透明度（参考主流做法） */
+@utility item-interactive {
+  transition: background-color 150ms ease, color 150ms ease;
+
+  &:hover {
+    background-color: var(--color-fill);
+  }
+}
+
+@utility item-active {
+  background-color: var(--color-fill-strong);
+  color: var(--color-fg);
+}
+
+/** 入场动画 */
+@utility animate-in {
+  animation: eag-fade-up 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/** 顶部高光细线 */
+@utility hairline {
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.04);
+}
+
+@utility brand-glow {
+  box-shadow: 0 0 0 1px var(--color-primary-border), 0 2px 10px -2px var(--color-primary-glow);
+}
+
+/**
+ * 数据表格：统一表头、行高、分隔与悬浮态。
+ */
+@utility tbl {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+
+  & thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--color-n-900);
+    color: var(--color-fg-subtle);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+  }
+
+  & tbody td {
+    padding: 11px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-line) 70%, transparent);
+    color: var(--color-fg-muted);
+    vertical-align: middle;
+  }
+
+  & tbody tr {
+    transition: background-color 140ms ease;
+  }
+
+  & tbody tr:hover {
+    background-color: var(--color-fill);
+  }
+
+  & tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+/** 表单元件 */
+@utility field {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line);
+  background-color: var(--color-raised);
+  color: var(--color-fg);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 140ms ease, background-color 140ms ease;
+
+  &::placeholder { color: var(--color-fg-faint); }
+  &:hover { border-color: var(--color-line-strong); }
+  &:focus { border-color: var(--color-primary-border); background-color: var(--color-n-850); }
+  &:disabled { opacity: 0.45; cursor: not-allowed; }
+}
+
+/* 多行文本域：field 固定高度不适用，恢复自适应 */
+textarea.field {
+  height: auto;
+  min-height: 64px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+@utility seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background-color: var(--color-fill-subtle);
+}
+
+@utility seg-item {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-fg-subtle);
+  transition: background-color 140ms ease, color 140ms ease;
+
+  &:hover { color: var(--color-fg-muted); }
+
+  &[data-active="true"] {
+    background-color: var(--color-fill-strong);
+    color: var(--color-fg);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   滚动条
+   ------------------------------------------------------------------------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--eag-scrollbar) transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--eag-scrollbar);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--eag-scrollbar-hover); background-clip: padding-box; }
+
+/* ---------------------------------------------------------------------------
+   动画
+   ------------------------------------------------------------------------- */
+
+@keyframes eag-fade-up {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--eag-shimmer-a) 25%,
+    var(--eag-shimmer-b) 50%,
+    var(--eag-shimmer-a) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/** 运行中状态点的呼吸动画（参考主流 Agent 平台的会话状态指示） */
+@keyframes eag-breathe {
+  0%, 100% { opacity: 0.65; box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.5); transform: scale(1); }
+  50%      { opacity: 1;    box-shadow: 0 0 8px 2px rgba(62, 207, 142, 0.35); transform: scale(1.15); }
+}
+.animate-breathe { animation: eag-breathe 1.8s ease-in-out infinite; }
+
+/** 更含蓄的呼吸（侧栏状态点） */
+@keyframes eag-breathe-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+.animate-breathe-soft { animation: eag-breathe-soft 1.6s ease-in-out infinite; }
+
+.animate-pulse-ring { animation: eag-breathe 1.8s ease-in-out infinite; }

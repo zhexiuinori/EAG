@@ -1,0 +1,57 @@
+appId: com.eag.desktop
+productName: EAG Desktop
+copyright: Copyright (c) 2025
+
+directories:
+  output: release
+  buildResources: build
+
+# asar 内的文件不能被 node 直接执行，runtime 与 Pi SDK 需解包到实体目录
+asarUnpack:
+  - dist-electron/runtime/**/*
+  - node_modules/@earendil-works/**/*
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - src/desktop/main/**/*
+  - src/desktop/preload/**/*
+  - src/desktop/shared/**/*
+  - src/extension/**/*
+  - src/launcher/**/*
+  - src/swarm/**/*
+  - package.json
+  # 运行时依赖：adapters 会读取 Pi SDK 的 CLI 入口
+  - node_modules/**/*
+  - "!node_modules/.bin/**"
+  - "!node_modules/**/*.map"
+  - "!node_modules/**/*.md"
+  - "!node_modules/**/LICENSE*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: null
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: null
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: null

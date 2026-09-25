@@ -1,0 +1,10 @@
+[
+  { "path": "${PROJECT_ROOT}", "access": "rw" },
+  { "path": "${PROJECT_ROOT}/node_modules", "access": "hidden" },
+  { "path": "${PROJECT_ROOT}/.env", "access": "r" },
+  { "path": "${PROJECT_ROOT}/credentials.json", "access": "hidden" },
+  { "path": "${PROJECT_ROOT}/.git", "access": "hidden" },
+  { "path": "${PROJECT_ROOT}/.eag", "access": "hidden" },
+  { "path": "${PROJECT_ROOT}/config.json", "access": "hidden" },
+  { "path": "${HOME}", "access": "hidden" }
+]

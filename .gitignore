@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.env
+*.log
+audit/
+users/
+
+# 运行时状态与构建产物
+.eag/
+dist-electron/
+release/
+tmp_test_agent/
+*.tsbuildinfo
+
+# 含密钥的运行时配置（模板见 config.example.json）
+config.json
+src/desktop/config.json
+# MCP 服务器配置（env 可能含密钥占位符）
+mcp.json
+# 定时任务配置（运行时由管理员维护）
+schedules.json
+# 桌面端运行时状态目录（含 workers 状态等）
+src/desktop/.eag/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
