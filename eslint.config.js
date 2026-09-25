@@ -14,6 +14,9 @@ export default tseslint.config(
       "release/**",
       "coverage/**",
       "src/desktop/renderer/dist/**",
+      // 本地运行/测试遗留的插件缓存目录（已被 .gitignore 忽略，正常 clone 不存在；
+      // 但本地环境里存在时 npx eslint . 会误扫其中第三方副本）
+      ".eag/**",
     ],
   },
   js.configs.recommended,
