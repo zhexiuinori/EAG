@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import * as ipc from "../lib/ipc.ts";
 import PageShell from "../components/PageShell.tsx";
 import Button from "../components/Button.tsx";
@@ -48,6 +49,8 @@ export default function AdminWorkers() {
   const loadConfig = useConfigStore((s) => s.load);
 
   const toast = useToast();
+  const loc = useLocation();
+  const nav = useNavigate();
   const [adapters, setAdapters] = useState<AdapterStatus[]>([]);
   const [groups, setGroups] = useState<UserGroup[]>([]);
   // 知识库（RAG）：供表单挂载选择
@@ -57,6 +60,15 @@ export default function AdminWorkers() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Worker | null>(null);
   const [form, setForm] = useState<CreateForm>(EMPTY_FORM);
+
+  // 从工作区首页「新建助手」卡片跳入：直达创建表单，随后清掉路由 state 防刷新复现
+  useEffect(() => {
+    const st = loc.state as { create?: unknown } | null;
+    if (st?.create) {
+      setShowCreate(true);
+      nav(loc.pathname, { replace: true, state: null });
+    }
+  }, [loc.state, loc.pathname, nav]);
 
   // 分配管理（多用户 + 用户组）
   const [assignTarget, setAssignTarget] = useState<Worker | null>(null);

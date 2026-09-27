@@ -325,10 +325,10 @@ export default function Workspace() {
                 );
               })}
 
-              {/* 新建助手（管理员入口） */}
+              {/* 新建助手（管理员入口）：直达创建表单，免去落地后再找按钮 */}
               {canConsole && (
                 <button
-                  onClick={() => nav("/admin/workers")}
+                  onClick={() => nav("/admin/workers", { state: { create: true } })}
                   className="rounded-xl border border-dashed border-line-strong text-fg-faint hover:text-primary hover:border-primary-border transition-colors p-4 flex flex-col items-center justify-center gap-1.5 min-h-[104px]"
                 >
                   <IconPlus size={18} />
