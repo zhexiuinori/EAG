@@ -4,8 +4,9 @@ import * as ipc from "../lib/ipc.ts";
 import { passwordPolicyOk, PASSWORD_POLICY_LABEL } from "../lib/password.ts";
 import {
   IconChevronRight, IconCheck,
-  IconSun, IconMoon, IconMonitor, IconInbox, IconLogout, IconEdit, IconBell,
+  IconSun, IconMoon, IconMonitor, IconInbox, IconLogout, IconEdit, IconBell, IconSparkle,
 } from "./icons.tsx";
+import { ADMIN_MODULES, moduleOfPath } from "./adminNav.ts";
 import Dropdown, { MenuItem, MenuDivider, MenuLabel } from "./Dropdown.tsx";
 import { Modal } from "./Modal.tsx";
 import Button from "./Button.tsx";
@@ -112,12 +113,54 @@ export default function TopBar({ isAdmin }: Props) {
     // 始终压在页面内容之上。下拉菜单已由 Dropdown 组件 Portal 到 body（z-60），
     // 不再依赖此层级。取 40 < Modal(50)，保证模态框仍能盖住顶栏。
     <header className="relative z-40 shrink-0 h-14 bg-surface/50 backdrop-blur-sm border-b border-line flex items-center px-5 gap-4">
-      {/* 面包屑 */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <span className="text-[12px] text-fg-faint">EAG</span>
-        <IconChevronRight size={13} className="text-fg-faint/60 shrink-0" />
-        <span className="text-[12.5px] font-medium text-fg-muted truncate">{pageTitle}</span>
-      </div>
+      {/* 左侧：管理端为品牌标识（Dolphin 控制台形态），用户端为面包屑 */}
+      {isAdmin ? (
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="size-7 rounded-lg bg-gradient-to-br from-primary to-primary-strong flex items-center justify-center brand-glow shrink-0">
+            <IconSparkle size={14} className="text-white" />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <div className="text-[13px] font-semibold text-fg">EAG</div>
+            <div className="text-[10px] text-fg-faint">管理控制台</div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[12px] text-fg-faint">EAG</span>
+          <IconChevronRight size={13} className="text-fg-faint/60 shrink-0" />
+          <span className="text-[12.5px] font-medium text-fg-muted truncate">{pageTitle}</span>
+        </div>
+      )}
+
+      {/* 管理端：居中模块 tab（智能体管理 / AI 网关 / 治理 / 自动化 / 系统） */}
+      {isAdmin && (
+        <nav className="hidden md:flex absolute left-1/2 -translate-x-1/2 items-center gap-1">
+          {ADMIN_MODULES.map((m) => {
+            const active = moduleOfPath(loc.pathname)?.key === m.key;
+            const Icon = m.icon;
+            const badge = m.key === "governance" ? pendingApprovals : 0;
+            return (
+              <button
+                key={m.key}
+                onClick={() => nav(m.pages[0].path)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12.5px] font-medium transition-colors ${
+                  active
+                    ? "bg-primary-bg text-primary"
+                    : "text-fg-subtle hover:text-fg-muted hover:bg-n-850/60"
+                }`}
+              >
+                <Icon size={13} />
+                {m.label}
+                {badge > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-yellow text-n-1000 text-[9px] font-bold flex items-center justify-center tabular-nums">
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
       <div className="flex-1" />
 
@@ -125,8 +168,9 @@ export default function TopBar({ isAdmin }: Props) {
           全局默认 Provider 属管理员配置（Models 页），用户对模型的临时切换
           是"本 Agent + 我"的会话级行为，不应出现在全局顶栏。 */}
 
-      {/* 审批收件箱：仅管理员可见（审批是治理信息） */}
-      {session?.role === "admin" && (
+      {/* 审批收件箱：仅管理员可见（审批是治理信息）。
+          管理端界面下由居中「治理」tab 承载红点，这里不再重复展示。 */}
+      {!isAdmin && session?.role === "admin" && (
         <button
           onClick={() => nav("/admin/inbox")}
           title={pendingApprovals > 0 ? `${pendingApprovals} 条待批审批` : "审批收件箱"}

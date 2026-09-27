@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
-  IconWorkspace, IconNetwork, IconSliders, IconList, IconShield, IconUsers,
+  IconShield,
   IconChat, IconArrowLeft, IconPlus, IconSparkle, IconChevronRight, IconChevronDown,
-  IconTrash, IconSearch, IconPin, IconInbox, IconGauge, IconBook, IconClock, IconLogout,
+  IconTrash, IconSearch, IconPin, IconBook, IconClock, IconLogout,
 } from "./icons.tsx";
 import { Modal } from "./Modal.tsx";
 import { useToast } from "./Toast.tsx";
@@ -11,23 +11,12 @@ import * as ipc from "../lib/ipc.ts";
 import type { ScheduledJob } from "@shared/types.ts";
 import { useWorkerStore } from "../stores/workerStore.ts";
 import { useUserStore } from "../stores/userStore.ts";
+import { useApprovalStore, countPendingApprovals } from "../stores/approvalStore.ts";
+import { moduleOfPath } from "./adminNav.ts";
 import { getSeenAgentIds, markAgentsSeen } from "../lib/seen.ts";
 import { listSessions, createSession, deleteSession, pinSession, groupSessions, type ChatSession } from "../lib/sessions.ts";
 
 interface Props { isAdmin: boolean }
-
-const ADMIN_NAV = [
-  { path: "/admin/inbox", label: "Inbox", icon: IconInbox },
-  { path: "/admin/governance", label: "治理总览", icon: IconGauge },
-  { path: "/admin/workers", label: "Workers", icon: IconWorkspace },
-  { path: "/admin/knowledge", label: "知识库", icon: IconBook },
-  { path: "/admin/schedules", label: "定时任务", icon: IconClock },
-  { path: "/admin/models", label: "Models", icon: IconSliders },
-  { path: "/admin/audit", label: "Audit", icon: IconList },
-  { path: "/admin/policy", label: "Policy", icon: IconShield },
-  { path: "/admin/swarm", label: "Swarm", icon: IconNetwork },
-  { path: "/admin/settings", label: "Settings", icon: IconUsers },
-];
 
 /** 品牌标识：渐变方块 + 光晕 */
 function BrandMark() {
@@ -45,6 +34,7 @@ export default function Sidebar({ isAdmin }: Props) {
   const canConsole = useUserStore(
     (s) => !!s.session && (s.session.role === "admin" || s.session.canManageConsole),
   );
+  const approvals = useApprovalStore((s) => s.approvals);
   const userName = useUserStore((s) => s.session?.userName);
   const logout = useUserStore((s) => s.logout);
   /** 底部用户区菜单 / 记忆管理弹窗 */
@@ -96,27 +86,22 @@ export default function Sidebar({ isAdmin }: Props) {
     : sessions;
 
   if (isAdmin) {
+    // 管理端：顶 header 已有品牌与模块 tab，左侧为「当前模块」的子菜单（Dolphin 控制台形态）
+    const mod = moduleOfPath(loc.pathname);
+    const pendingApprovals = countPendingApprovals(approvals);
     return (
-      <aside className="w-56 shrink-0 flex flex-col bg-surface border-r border-line">
-        {/* 品牌区 */}
-        <div className="h-14 flex items-center gap-2.5 px-4 border-b border-line">
-          <BrandMark />
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-fg leading-tight">EAG</div>
-            <div className="text-[10px] text-fg-faint leading-tight">Admin Console</div>
-          </div>
+      <aside className="w-52 shrink-0 flex flex-col bg-surface border-r border-line">
+        {/* 当前模块名 */}
+        <div className="h-14 flex items-center px-4 border-b border-line">
+          <span className="text-[13px] font-semibold text-fg">{mod?.label ?? "管理控制台"}</span>
         </div>
 
-        {/* 导航 */}
-        <div className="px-3 pt-4 pb-1.5">
-          <span className="text-[10px] font-semibold text-fg-faint uppercase tracking-[0.08em]">
-            治理控制台
-          </span>
-        </div>
-        <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
-          {ADMIN_NAV.map((item) => {
+        {/* 模块内页面 */}
+        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+          {(mod?.pages ?? []).map((item) => {
             const active = loc.pathname.startsWith(item.path);
             const Icon = item.icon;
+            const badge = item.path === "/admin/inbox" ? pendingApprovals : 0;
             return (
               <button
                 key={item.path}
@@ -133,6 +118,11 @@ export default function Sidebar({ isAdmin }: Props) {
                 />
                 <Icon size={15} className={active ? "text-primary" : "text-fg-faint group-hover:text-fg-subtle"} />
                 <span className="truncate">{item.label}</span>
+                {badge > 0 && (
+                  <span className="ml-auto min-w-[16px] h-[16px] px-1 rounded-full bg-yellow text-n-1000 text-[9px] font-bold flex items-center justify-center tabular-nums">
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
               </button>
             );
           })}
