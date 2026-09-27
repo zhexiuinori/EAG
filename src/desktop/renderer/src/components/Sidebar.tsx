@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   IconShield,
@@ -8,13 +8,12 @@ import {
 import { Modal } from "./Modal.tsx";
 import { useToast } from "./Toast.tsx";
 import * as ipc from "../lib/ipc.ts";
-import type { ScheduledJob } from "@shared/types.ts";
 import { useWorkerStore } from "../stores/workerStore.ts";
 import { useUserStore } from "../stores/userStore.ts";
 import { useApprovalStore, countPendingApprovals } from "../stores/approvalStore.ts";
 import { moduleOfPath } from "./adminNav.ts";
 import { getSeenAgentIds, markAgentsSeen } from "../lib/seen.ts";
-import { listSessions, createSession, deleteSession, pinSession, groupSessions, type ChatSession } from "../lib/sessions.ts";
+import { listSessions, createSession, deleteSession, pinSession, type ChatSession } from "../lib/sessions.ts";
 
 interface Props { isAdmin: boolean }
 
@@ -50,24 +49,29 @@ export default function Sidebar({ isAdmin }: Props) {
 
   useEffect(() => { void loadMine(); }, [loadMine]);
 
-  /** 展开的 Agent（进入其会话列表视图）；null = 显示 Agent 列表 */
-  const [agentView, setAgentView] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-
-  // 进入聊天页时自动展开对应 Agent
-  useEffect(() => {
-    const matched = loc.pathname.match(/^\/app\/chat\/([^/]+)/);
-    if (matched) setAgentView(matched[1]);
-  }, [loc.pathname]);
-
+  /** 单层会话树：各 Agent 分组的折叠状态（key = workerId，true = 折叠） */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [sessionFilter, setSessionFilter] = useState("");
   const [tick, setTick] = useState(0);
-
-  // 会话按用户隔离：身份就绪且切换时重新读取
   const userId = useUserStore((s) => s.session?.userId);
+
+  /** 各 Agent 的会话列表（按用户隔离；localStorage 读取，随 tick / 路径 / 助手列表刷新） */
+  const sessionsByWorker = useMemo(() => {
+    if (!userId) return {} as Record<string, ChatSession[]>;
+    const map: Record<string, ChatSession[]> = {};
+    for (const w of workers) map[w.id] = listSessions(w.id);
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workers, tick, userId, loc.pathname]);
+
+  // 进入聊天页时确保对应 Agent 分组处于展开状态
   useEffect(() => {
-    setSessions(userId && agentView ? listSessions(agentView) : []);
-  }, [agentView, loc.pathname, tick, userId]);
+    const matched = loc.pathname.match(/^\/app\/chat\/([^/]+)/);
+    if (matched) {
+      const wid = matched[1];
+      setCollapsed((c) => (c[wid] ? { ...c, [wid]: false } : c));
+    }
+  }, [loc.pathname]);
 
   const removeSession = (s: ChatSession) => {
     deleteSession(s.id);
@@ -81,9 +85,57 @@ export default function Sidebar({ isAdmin }: Props) {
     }
   };
 
-  const shownSessions = sessionFilter.trim()
-    ? sessions.filter((s) => s.title.toLowerCase().includes(sessionFilter.trim().toLowerCase()))
-    : sessions;
+  const searching = sessionFilter.trim().length > 0;
+  const filterSessions = (list: ChatSession[]) =>
+    searching
+      ? list.filter((s) => s.title.toLowerCase().includes(sessionFilter.trim().toLowerCase()))
+      : list;
+
+  /** 单个会话项（会话树叶子节点） */
+  const renderSessionItem = (s: ChatSession) => {
+    const active = loc.pathname === `/app/chat/${s.workerId}/${s.id}`;
+    return (
+      <div key={s.id} className="group/item relative">
+        <button
+          onClick={() => nav(`/app/chat/${s.workerId}/${s.id}`)}
+          title={s.title}
+          className={`item-interactive w-full flex items-center gap-2 pl-7 pr-14 py-1.5 rounded-lg text-[12.5px] ${
+            active ? "item-active" : "text-fg-subtle"
+          }`}
+        >
+          {s.unread ? (
+            <span className="shrink-0 size-1.5 rounded-full bg-primary" title="有新回复" />
+          ) : (
+            <IconChat size={12} className={active ? "text-primary shrink-0" : "text-fg-faint shrink-0"} />
+          )}
+          <span className={`truncate flex-1 text-left ${s.unread ? "text-fg font-medium" : ""}`}>
+            {s.title}
+          </span>
+          {s.pinned && <IconPin size={11} className="shrink-0 text-fg-faint" />}
+        </button>
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/item:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); pinSession(s.id, !s.pinned); setTick((v) => v + 1); }}
+            title={s.pinned ? "取消置顶" : "置顶"}
+            className={`p-1 rounded transition-colors ${
+              s.pinned
+                ? "text-primary hover:bg-primary-bg"
+                : "text-fg-faint hover:text-primary hover:bg-primary-bg"
+            }`}
+          >
+            <IconPin size={11} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); removeSession(s); }}
+            title="删除会话"
+            className="p-1 rounded text-fg-faint hover:text-red hover:bg-red-bg transition-colors"
+          >
+            <IconTrash size={11} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   if (isAdmin) {
     // 管理端：顶 header 已有品牌与模块 tab，左侧为「当前模块」的子菜单（Dolphin 控制台形态）
@@ -153,189 +205,110 @@ export default function Sidebar({ isAdmin }: Props) {
         </div>
       </div>
 
-      {agentView ? (
-        /* ── 会话列表（展开某个 Agent 后） ── */
-        <>
-          <div className="px-3 pt-3 pb-2">
-            <button
-              onClick={() => { setAgentView(null); nav("/app"); }}
-              className="flex items-center gap-1.5 text-[11px] text-fg-subtle hover:text-fg-muted transition-colors"
-            >
-              <IconArrowLeft size={13} />
-              所有助手
-            </button>
-            <div className="mt-2 text-[12.5px] font-medium text-fg truncate">
-              {workers.find((w) => w.id === agentView)?.name ?? agentView}
-            </div>
+      {/* 全部动态：跨 Agent 时间线入口（PRD-001 R3） */}
+      <div className="px-2 pt-3">
+        <button
+          onClick={() => nav("/app/activity")}
+          className={`item-interactive group relative w-full flex items-center gap-2.5 pl-3.5 pr-2.5 py-2 rounded-lg text-[13px] ${
+            loc.pathname.startsWith("/app/activity") ? "item-active" : "text-fg-subtle"
+          }`}
+        >
+          <span
+            className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 rounded-r-full transition-all duration-150 ${
+              loc.pathname.startsWith("/app/activity") ? "h-4 bg-primary" : "h-0 bg-transparent"
+            }`}
+          />
+          <IconClock size={15} className={loc.pathname.startsWith("/app/activity") ? "text-primary" : "text-fg-faint group-hover:text-fg-subtle"} />
+          <span className="truncate">全部动态</span>
+        </button>
+      </div>
+
+      {/* 会话搜索：跨全部 Agent 按标题过滤 */}
+      <div className="px-3 pt-2.5">
+        <div className="relative">
+          <IconSearch size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-fg-faint pointer-events-none" />
+          <input
+            value={sessionFilter}
+            onChange={(e) => setSessionFilter(e.target.value)}
+            placeholder="搜索会话…"
+            className="field !h-7 !pl-7 !text-[11.5px]"
+          />
+        </div>
+      </div>
+
+      {/* 单层会话树：按 Agent 分组，组头可折叠 / 一键新会话，会话直接平铺（Dolphin 形态） */}
+      <nav className="flex-1 px-2 pt-2 space-y-1 overflow-y-auto">
+        {loadingAgents ? (
+          <div className="space-y-1.5 px-1">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="animate-shimmer h-8 rounded-md" />
+            ))}
           </div>
-
-          <div className="px-3 pb-2">
-            <button
-              onClick={() => {
-                const s = createSession(agentView);
-                nav(`/app/chat/${agentView}/${s.id}`);
-              }}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary-strong hover:bg-primary text-white text-[12px] font-medium transition-colors"
-            >
-              <IconPlus size={14} />
-              新会话
-            </button>
-          </div>
-
-          {/* 会话搜索：会话较多时按标题过滤 */}
-          {sessions.length > 3 && (
-            <div className="px-3 pb-1.5">
-              <div className="relative">
-                <IconSearch size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-fg-faint pointer-events-none" />
-                <input
-                  value={sessionFilter}
-                  onChange={(e) => setSessionFilter(e.target.value)}
-                  placeholder="搜索会话…"
-                  className="field !h-7 !pl-7 !text-[11.5px]"
-                />
-              </div>
-            </div>
-          )}
-
-          <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
-            {sessions.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-fg-faint">暂无会话</p>
-            ) : shownSessions.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-fg-faint">没有匹配的会话</p>
-            ) : (
-              groupSessions(shownSessions).map((g) => (
-                <div key={g.key}>
-                  {/* sticky 组头：置顶 / 今天 / 近 7 天 / 更早 */}
-                  <div className="sticky top-0 z-10 flex items-center gap-1.5 px-3 pt-2.5 pb-1 bg-surface/95 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-faint">
-                    {g.key === "pinned" && <IconPin size={10} />}
-                    {g.label}
-                    <span className="opacity-60 font-normal normal-case tracking-normal">{g.sessions.length}</span>
-                  </div>
-                  {g.sessions.map((s) => {
-                    const active = loc.pathname === `/app/chat/${s.workerId}/${s.id}`;
-                    return (
-                      <div key={s.id} className="group/item relative">
-                        <button
-                          onClick={() => nav(`/app/chat/${s.workerId}/${s.id}`)}
-                          title={s.title}
-                          className={`item-interactive w-full flex items-center gap-2 px-2.5 py-2 pr-14 rounded-lg text-[12.5px] ${
-                            active ? "item-active" : "text-fg-subtle"
-                          }`}
-                        >
-                          {s.unread ? (
-                            <span className="shrink-0 size-1.5 rounded-full bg-primary" title="有新回复" />
-                          ) : (
-                            <IconChat size={12} className={active ? "text-primary shrink-0" : "text-fg-faint shrink-0"} />
-                          )}
-                          <span className={`truncate flex-1 text-left ${s.unread ? "text-fg font-medium" : ""}`}>
-                            {s.title}
-                          </span>
-                          {s.pinned && <IconPin size={11} className="shrink-0 text-fg-faint" />}
-                        </button>
-                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); pinSession(s.id, !s.pinned); setTick((v) => v + 1); }}
-                            title={s.pinned ? "取消置顶" : "置顶"}
-                            className={`p-1 rounded transition-colors ${
-                              s.pinned
-                                ? "text-primary hover:bg-primary-bg"
-                                : "text-fg-faint hover:text-primary hover:bg-primary-bg"
-                            }`}
-                          >
-                            <IconPin size={11} />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeSession(s); }}
-                            title="删除会话"
-                            className="p-1 rounded text-fg-faint hover:text-red hover:bg-red-bg transition-colors"
-                          >
-                            <IconTrash size={11} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </nav>
-
-          {/* 定时任务区（Dolphin 形态）：当前助手的无人值守任务 */}
-          <ScheduleSection workerId={agentView} />
-        </>
-      ) : (
-        /* ── 助手列表 ── */
-        <>
-          {/* 全部动态：跨 Agent 时间线入口（PRD-001 R3） */}
-          <div className="px-2 pt-3">
-            <button
-              onClick={() => nav("/app/activity")}
-              className={`item-interactive group relative w-full flex items-center gap-2.5 pl-3.5 pr-2.5 py-2 rounded-lg text-[13px] ${
-                loc.pathname.startsWith("/app/activity") ? "item-active" : "text-fg-subtle"
-              }`}
-            >
-              <span
-                className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 rounded-r-full transition-all duration-150 ${
-                  loc.pathname.startsWith("/app/activity") ? "h-4 bg-primary" : "h-0 bg-transparent"
-                }`}
-              />
-              <IconClock size={15} className={loc.pathname.startsWith("/app/activity") ? "text-primary" : "text-fg-faint group-hover:text-fg-subtle"} />
-              <span className="truncate">全部动态</span>
-            </button>
-          </div>
-
-          <div className="px-3 pt-3 pb-1">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="text-[10px] font-semibold text-fg-faint uppercase tracking-[0.08em]">
-                我的助手
-              </span>
-              {workers.length > 0 && (
-                <span className="text-[10px] text-fg-faint">{workers.length}</span>
-              )}
-            </div>
-          </div>
-
-          <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
-            {loadingAgents ? (
-              <div className="space-y-1.5 px-1">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="animate-shimmer h-8 rounded-md" />
-                ))}
-              </div>
-            ) : workers.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-fg-faint">尚未分配到助手</p>
-            ) : (
-              workers.map((w) => {
-                const active = loc.pathname.startsWith(`/app/chat/${w.id}`);
-                const running = w.status === "running";
-                const isNew = !seenAgents.has(w.id);
-                return (
+        ) : workers.length === 0 ? (
+          <p className="px-3 py-2 text-[11px] text-fg-faint">尚未分配到助手</p>
+        ) : (
+          workers.map((w) => {
+            const list = filterSessions(sessionsByWorker[w.id] ?? []);
+            const isCollapsed = !searching && !!collapsed[w.id];
+            const running = w.status === "running";
+            const isNew = !seenAgents.has(w.id);
+            return (
+              <div key={w.id}>
+                {/* Agent 组头：点击折叠/展开，悬停出现「+」新会话 */}
+                <div className="group/agent relative">
                   <button
-                    key={w.id}
-                    onClick={() => { markAgentsSeen([w.id]); nav(`/app/chat/${w.id}`); }}
+                    onClick={() => {
+                      markAgentsSeen([w.id]);
+                      setCollapsed((c) => ({ ...c, [w.id]: !c[w.id] }));
+                    }}
                     title={w.description || w.name}
-                    className={`item-interactive group w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] ${
-                      active ? "item-active" : "text-fg-subtle"
-                    }`}
+                    className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[12px] font-medium text-fg-muted hover:bg-n-850/60 transition-colors"
                   >
+                    <IconChevronDown
+                      size={12}
+                      className={`shrink-0 text-fg-faint transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                    />
                     <span className="relative flex items-center justify-center shrink-0">
                       <span className={`w-1.5 h-1.5 rounded-full ${running ? "bg-green" : "bg-n-600"}`} />
                       {running && <span className="absolute w-1.5 h-1.5 rounded-full bg-green animate-breathe-soft" />}
                     </span>
-                    <span className="truncate flex-1 text-left">{w.name}</span>
+                    <span className="truncate flex-1 text-left pr-5">{w.name}</span>
                     {isNew && (
                       <span className="shrink-0 text-[9px] font-bold px-1 py-px rounded bg-primary text-white" title="新分配给你的助手">
                         NEW
                       </span>
                     )}
-                    <IconChevronRight size={13} className="text-fg-faint shrink-0" />
                   </button>
-                );
-              })
-            )}
-          </nav>
-        </>
-      )}
+                  <button
+                    onClick={() => {
+                      markAgentsSeen([w.id]);
+                      const s = createSession(w.id);
+                      nav(`/app/chat/${w.id}/${s.id}`);
+                    }}
+                    title={`与 ${w.name} 开始新会话`}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/agent:opacity-100 text-fg-faint hover:text-primary hover:bg-primary-bg transition-all"
+                  >
+                    <IconPlus size={12} />
+                  </button>
+                </div>
+
+                {/* 该 Agent 的会话列表 */}
+                {!isCollapsed && (
+                  <div className="mt-0.5 space-y-0.5">
+                    {list.length === 0 ? (
+                      <p className="pl-7 py-1 text-[10.5px] text-fg-faint">
+                        {searching ? "无匹配会话" : "暂无会话"}
+                      </p>
+                    ) : (
+                      list.map(renderSessionItem)
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </nav>
 
       {/* 底部：管理控制台入口 + 用户区（Dolphin 形态） */}
       <div className="p-2 border-t border-line space-y-0.5">
@@ -388,252 +361,6 @@ export default function Sidebar({ isAdmin }: Props) {
 
       <MemoryModal open={memoryOpen} onClose={() => setMemoryOpen(false)} />
     </aside>
-  );
-}
-
-/**
- * 定时任务区（Dolphin 形态）：当前助手的无人值守任务。
- * 定时任务属治理域（服务端 /admin/schedules）：无权限时整区静默隐藏，不打扰普通用户。
- */
-function ScheduleSection({ workerId }: { workerId: string }) {
-  const toast = useToast();
-  const [jobs, setJobs] = useState<ScheduledJob[]>([]);
-  const [available, setAvailable] = useState(true);
-  const [open, setOpen] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [busy, setBusy] = useState(false);
-  // 新建表单：触发规则二选一（每天 HH:MM / 每 N 分钟），与 ScheduledJob 模型一致
-  const [name, setName] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [mode, setMode] = useState<"daily" | "every">("daily");
-  const [dailyAt, setDailyAt] = useState("09:00");
-  const [everyMinutes, setEveryMinutes] = useState("60");
-
-  const load = useCallback(() => {
-    ipc.scheduleList()
-      .then((r) => {
-        setAvailable(true);
-        setJobs((r.jobs ?? []).filter((j) => j.workerId === workerId));
-      })
-      .catch(() => setAvailable(false));
-  }, [workerId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (!available) return null;
-
-  const describe = (j: ScheduledJob) =>
-    j.everyMinutes ? `每 ${j.everyMinutes} 分钟` : j.dailyAt ? `每天 ${j.dailyAt}` : "未设置触发";
-
-  const submit = async () => {
-    const n = name.trim();
-    const p = prompt.trim();
-    if (!n || !p) {
-      toast.error("请填写任务名称和任务内容");
-      return;
-    }
-    const minutes = Number(everyMinutes);
-    if (mode === "every" && (!Number.isFinite(minutes) || minutes < 1)) {
-      toast.error("间隔分钟数需 ≥ 1");
-      return;
-    }
-    setBusy(true);
-    try {
-      await ipc.scheduleUpsert({
-        name: n,
-        workerId,
-        prompt: p,
-        enabled: true,
-        ...(mode === "every" ? { everyMinutes: minutes } : { dailyAt }),
-      });
-      toast.success("定时任务已创建");
-      setCreating(false);
-      setName("");
-      setPrompt("");
-      load();
-    } catch (e: any) {
-      toast.error(`创建失败：${e?.message ?? e}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const toggleEnabled = async (j: ScheduledJob) => {
-    try {
-      await ipc.scheduleUpsert({
-        id: j.id,
-        name: j.name,
-        workerId: j.workerId,
-        prompt: j.prompt,
-        everyMinutes: j.everyMinutes,
-        dailyAt: j.dailyAt,
-        enabled: !j.enabled,
-      });
-      load();
-    } catch (e: any) {
-      toast.error(`操作失败：${e?.message ?? e}`);
-    }
-  };
-
-  const remove = async (j: ScheduledJob) => {
-    try {
-      await ipc.scheduleDelete({ id: j.id });
-      toast.success("定时任务已删除");
-      load();
-    } catch (e: any) {
-      toast.error(`删除失败：${e?.message ?? e}`);
-    }
-  };
-
-  return (
-    <div className="border-t border-line">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-faint hover:text-fg-subtle transition-colors"
-      >
-        <IconClock size={11} />
-        定时任务
-        <span className="opacity-60 font-normal normal-case tracking-normal">{jobs.length}</span>
-        <IconChevronDown size={11} className={`ml-auto transition-transform ${open ? "" : "-rotate-90"}`} />
-      </button>
-
-      {open && (
-        <div className="px-2 pb-2 space-y-0.5 max-h-44 overflow-y-auto">
-          {jobs.length === 0 ? (
-            <p className="px-2 py-1 text-[11px] text-fg-faint">暂无定时任务</p>
-          ) : (
-            jobs.map((j) => (
-              <div key={j.id} className="group/job flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-n-850/60">
-                <span
-                  className={`shrink-0 w-1.5 h-1.5 rounded-full ${j.enabled ? "bg-green" : "bg-n-600"}`}
-                  title={j.enabled ? "已启用" : "已停用"}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[11.5px] text-fg-muted truncate" title={j.prompt}>{j.name}</div>
-                  <div className="text-[10px] text-fg-faint">
-                    {describe(j)}
-                    {j.lastStatus === "error" && <span className="text-red"> · 上次执行失败</span>}
-                  </div>
-                </div>
-                <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover/job:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => void toggleEnabled(j)}
-                    title={j.enabled ? "停用" : "启用"}
-                    className="p-1 rounded text-fg-faint hover:text-primary hover:bg-primary-bg transition-colors"
-                  >
-                    <IconClock size={11} />
-                  </button>
-                  <button
-                    onClick={() => void remove(j)}
-                    title="删除"
-                    className="p-1 rounded text-fg-faint hover:text-red hover:bg-red-bg transition-colors"
-                  >
-                    <IconTrash size={11} />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-          <button
-            onClick={() => setCreating(true)}
-            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-fg-faint hover:text-primary hover:bg-primary-bg/50 transition-colors"
-          >
-            <IconPlus size={12} />
-            新建定时任务
-          </button>
-        </div>
-      )}
-
-      <Modal
-        open={creating}
-        title="新建定时任务"
-        onClose={() => setCreating(false)}
-        footer={
-          <>
-            <button
-              onClick={() => setCreating(false)}
-              className="px-3 py-1.5 rounded-lg border border-line text-[12px] text-fg-subtle hover:text-fg-muted transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={() => void submit()}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-lg bg-primary-strong hover:bg-primary disabled:opacity-40 text-white text-[12px] font-medium transition-colors"
-            >
-              {busy ? "创建中…" : "创建"}
-            </button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <div>
-            <label className="block text-[11px] font-semibold text-fg-subtle mb-1.5">任务名称</label>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="如：每日代码巡检"
-              className="field !h-9"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-fg-subtle mb-1.5">任务内容（交给助手执行的指令）</label>
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              rows={3}
-              placeholder="如：检查工作区内未提交的改动并给出整理建议"
-              className="w-full px-3 py-2 bg-n-900 border border-line rounded-lg text-[12.5px] leading-relaxed text-fg placeholder-fg-faint outline-none focus:border-primary-border transition-colors resize-none"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-fg-subtle mb-1.5">触发方式</label>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setMode("daily")}
-                className={`px-2.5 py-1.5 rounded-lg border text-[11.5px] transition-colors ${
-                  mode === "daily"
-                    ? "bg-primary-bg border-primary-border text-primary"
-                    : "border-line text-fg-subtle hover:text-fg-muted"
-                }`}
-              >
-                每天
-              </button>
-              <button
-                onClick={() => setMode("every")}
-                className={`px-2.5 py-1.5 rounded-lg border text-[11.5px] transition-colors ${
-                  mode === "every"
-                    ? "bg-primary-bg border-primary-border text-primary"
-                    : "border-line text-fg-subtle hover:text-fg-muted"
-                }`}
-              >
-                每隔 N 分钟
-              </button>
-              {mode === "daily" ? (
-                <input
-                  type="time"
-                  value={dailyAt}
-                  onChange={(e) => setDailyAt(e.target.value)}
-                  className="field !h-9 !w-28"
-                />
-              ) : (
-                <input
-                  type="number"
-                  min={1}
-                  value={everyMinutes}
-                  onChange={(e) => setEveryMinutes(e.target.value)}
-                  className="field !h-9 !w-28"
-                />
-              )}
-            </div>
-            <p className="mt-1.5 text-[10.5px] text-fg-faint">
-              执行同样受治理：预算检查、策略、审计一个不少
-            </p>
-          </div>
-        </div>
-      </Modal>
-    </div>
   );
 }
 

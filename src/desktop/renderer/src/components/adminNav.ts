@@ -33,14 +33,6 @@ export const ADMIN_MODULES: AdminModule[] = [
     ],
   },
   {
-    key: "gateway",
-    label: "AI 网关",
-    icon: IconSliders,
-    pages: [
-      { path: "/admin/models", label: "Models", icon: IconSliders },
-    ],
-  },
-  {
     key: "governance",
     label: "治理",
     icon: IconShield,
@@ -52,10 +44,11 @@ export const ADMIN_MODULES: AdminModule[] = [
     ],
   },
   {
-    key: "automation",
-    label: "自动化",
-    icon: IconClock,
+    key: "resources",
+    label: "资源",
+    icon: IconSliders,
     pages: [
+      { path: "/admin/models", label: "Models", icon: IconSliders },
       { path: "/admin/schedules", label: "定时任务", icon: IconClock },
     ],
   },
