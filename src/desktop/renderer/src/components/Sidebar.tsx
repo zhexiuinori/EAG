@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   IconWorkspace, IconNetwork, IconSliders, IconList, IconShield, IconUsers,
-  IconChat, IconArrowLeft, IconPlus, IconSparkle, IconChevronRight,
-  IconTrash, IconSearch, IconPin, IconInbox, IconGauge, IconBook, IconClock,
+  IconChat, IconArrowLeft, IconPlus, IconSparkle, IconChevronRight, IconChevronDown,
+  IconTrash, IconSearch, IconPin, IconInbox, IconGauge, IconBook, IconClock, IconLogout,
 } from "./icons.tsx";
+import { Modal } from "./Modal.tsx";
 import { useToast } from "./Toast.tsx";
+import * as ipc from "../lib/ipc.ts";
+import type { ScheduledJob } from "@shared/types.ts";
 import { useWorkerStore } from "../stores/workerStore.ts";
 import { useUserStore } from "../stores/userStore.ts";
 import { getSeenAgentIds, markAgentsSeen } from "../lib/seen.ts";
@@ -42,6 +45,11 @@ export default function Sidebar({ isAdmin }: Props) {
   const canConsole = useUserStore(
     (s) => !!s.session && (s.session.role === "admin" || s.session.canManageConsole),
   );
+  const userName = useUserStore((s) => s.session?.userName);
+  const logout = useUserStore((s) => s.logout);
+  /** 底部用户区菜单 / 记忆管理弹窗 */
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   // Worker 列表走全局缓存：与 Workspace / WorkChat 共用，避免重复请求
   const workers = useWorkerStore((s) => s.mine);
@@ -261,6 +269,9 @@ export default function Sidebar({ isAdmin }: Props) {
               ))
             )}
           </nav>
+
+          {/* 定时任务区（Dolphin 形态）：当前助手的无人值守任务 */}
+          <ScheduleSection workerId={agentView} />
         </>
       ) : (
         /* ── 助手列表 ── */
@@ -336,8 +347,9 @@ export default function Sidebar({ isAdmin }: Props) {
         </>
       )}
 
-      {canConsole && (
-        <div className="p-2 border-t border-line">
+      {/* 底部：管理控制台入口 + 用户区（Dolphin 形态） */}
+      <div className="p-2 border-t border-line space-y-0.5">
+        {canConsole && (
           <button
             onClick={() => nav("/admin/workers")}
             className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-[11px] text-fg-subtle hover:text-fg-muted hover:bg-n-850/60 transition-colors"
@@ -346,8 +358,335 @@ export default function Sidebar({ isAdmin }: Props) {
             管理控制台
             <IconChevronRight size={13} className="ml-auto text-fg-faint" />
           </button>
+        )}
+
+        <div className="relative">
+          {userMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setUserMenuOpen(false)} />
+              <div className="absolute bottom-full left-0 right-0 mb-1 z-40 rounded-lg border border-line bg-elevated shadow-xl p-1 animate-in">
+                <button
+                  onClick={() => { setUserMenuOpen(false); setMemoryOpen(true); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-[12px] text-fg-subtle hover:text-fg hover:bg-n-850/60 transition-colors"
+                >
+                  <IconBook size={13} className="text-fg-faint" />
+                  记忆管理
+                </button>
+                <button
+                  onClick={() => { setUserMenuOpen(false); void logout().finally(() => nav("/login")); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-[12px] text-red hover:bg-red-bg transition-colors"
+                >
+                  <IconLogout size={13} />
+                  退出登录
+                </button>
+              </div>
+            </>
+          )}
+          <button
+            onClick={() => setUserMenuOpen((v) => !v)}
+            title="账户"
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-n-850/60 transition-colors"
+          >
+            <span className="size-6 rounded-full bg-primary-strong text-white flex items-center justify-center text-[11px] font-semibold shrink-0">
+              {(userName ?? "?").slice(0, 1).toUpperCase()}
+            </span>
+            <span className="text-[12px] text-fg truncate flex-1 text-left">{userName ?? "未登录"}</span>
+            <IconChevronDown size={12} className={`text-fg-faint transition-transform ${userMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      </div>
+
+      <MemoryModal open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+    </aside>
+  );
+}
+
+/**
+ * 定时任务区（Dolphin 形态）：当前助手的无人值守任务。
+ * 定时任务属治理域（服务端 /admin/schedules）：无权限时整区静默隐藏，不打扰普通用户。
+ */
+function ScheduleSection({ workerId }: { workerId: string }) {
+  const toast = useToast();
+  const [jobs, setJobs] = useState<ScheduledJob[]>([]);
+  const [available, setAvailable] = useState(true);
+  const [open, setOpen] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // 新建表单：触发规则二选一（每天 HH:MM / 每 N 分钟），与 ScheduledJob 模型一致
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [mode, setMode] = useState<"daily" | "every">("daily");
+  const [dailyAt, setDailyAt] = useState("09:00");
+  const [everyMinutes, setEveryMinutes] = useState("60");
+
+  const load = useCallback(() => {
+    ipc.scheduleList()
+      .then((r) => {
+        setAvailable(true);
+        setJobs((r.jobs ?? []).filter((j) => j.workerId === workerId));
+      })
+      .catch(() => setAvailable(false));
+  }, [workerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!available) return null;
+
+  const describe = (j: ScheduledJob) =>
+    j.everyMinutes ? `每 ${j.everyMinutes} 分钟` : j.dailyAt ? `每天 ${j.dailyAt}` : "未设置触发";
+
+  const submit = async () => {
+    const n = name.trim();
+    const p = prompt.trim();
+    if (!n || !p) {
+      toast.error("请填写任务名称和任务内容");
+      return;
+    }
+    const minutes = Number(everyMinutes);
+    if (mode === "every" && (!Number.isFinite(minutes) || minutes < 1)) {
+      toast.error("间隔分钟数需 ≥ 1");
+      return;
+    }
+    setBusy(true);
+    try {
+      await ipc.scheduleUpsert({
+        name: n,
+        workerId,
+        prompt: p,
+        enabled: true,
+        ...(mode === "every" ? { everyMinutes: minutes } : { dailyAt }),
+      });
+      toast.success("定时任务已创建");
+      setCreating(false);
+      setName("");
+      setPrompt("");
+      load();
+    } catch (e: any) {
+      toast.error(`创建失败：${e?.message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleEnabled = async (j: ScheduledJob) => {
+    try {
+      await ipc.scheduleUpsert({
+        id: j.id,
+        name: j.name,
+        workerId: j.workerId,
+        prompt: j.prompt,
+        everyMinutes: j.everyMinutes,
+        dailyAt: j.dailyAt,
+        enabled: !j.enabled,
+      });
+      load();
+    } catch (e: any) {
+      toast.error(`操作失败：${e?.message ?? e}`);
+    }
+  };
+
+  const remove = async (j: ScheduledJob) => {
+    try {
+      await ipc.scheduleDelete({ id: j.id });
+      toast.success("定时任务已删除");
+      load();
+    } catch (e: any) {
+      toast.error(`删除失败：${e?.message ?? e}`);
+    }
+  };
+
+  return (
+    <div className="border-t border-line">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-faint hover:text-fg-subtle transition-colors"
+      >
+        <IconClock size={11} />
+        定时任务
+        <span className="opacity-60 font-normal normal-case tracking-normal">{jobs.length}</span>
+        <IconChevronDown size={11} className={`ml-auto transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+
+      {open && (
+        <div className="px-2 pb-2 space-y-0.5 max-h-44 overflow-y-auto">
+          {jobs.length === 0 ? (
+            <p className="px-2 py-1 text-[11px] text-fg-faint">暂无定时任务</p>
+          ) : (
+            jobs.map((j) => (
+              <div key={j.id} className="group/job flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-n-850/60">
+                <span
+                  className={`shrink-0 w-1.5 h-1.5 rounded-full ${j.enabled ? "bg-green" : "bg-n-600"}`}
+                  title={j.enabled ? "已启用" : "已停用"}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11.5px] text-fg-muted truncate" title={j.prompt}>{j.name}</div>
+                  <div className="text-[10px] text-fg-faint">
+                    {describe(j)}
+                    {j.lastStatus === "error" && <span className="text-red"> · 上次执行失败</span>}
+                  </div>
+                </div>
+                <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover/job:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => void toggleEnabled(j)}
+                    title={j.enabled ? "停用" : "启用"}
+                    className="p-1 rounded text-fg-faint hover:text-primary hover:bg-primary-bg transition-colors"
+                  >
+                    <IconClock size={11} />
+                  </button>
+                  <button
+                    onClick={() => void remove(j)}
+                    title="删除"
+                    className="p-1 rounded text-fg-faint hover:text-red hover:bg-red-bg transition-colors"
+                  >
+                    <IconTrash size={11} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+          <button
+            onClick={() => setCreating(true)}
+            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-fg-faint hover:text-primary hover:bg-primary-bg/50 transition-colors"
+          >
+            <IconPlus size={12} />
+            新建定时任务
+          </button>
         </div>
       )}
-    </aside>
+
+      <Modal
+        open={creating}
+        title="新建定时任务"
+        onClose={() => setCreating(false)}
+        footer={
+          <>
+            <button
+              onClick={() => setCreating(false)}
+              className="px-3 py-1.5 rounded-lg border border-line text-[12px] text-fg-subtle hover:text-fg-muted transition-colors"
+            >
+              取消
+            </button>
+            <button
+              onClick={() => void submit()}
+              disabled={busy}
+              className="px-3 py-1.5 rounded-lg bg-primary-strong hover:bg-primary disabled:opacity-40 text-white text-[12px] font-medium transition-colors"
+            >
+              {busy ? "创建中…" : "创建"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-[11px] font-semibold text-fg-subtle mb-1.5">任务名称</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="如：每日代码巡检"
+              className="field !h-9"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-fg-subtle mb-1.5">任务内容（交给助手执行的指令）</label>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={3}
+              placeholder="如：检查工作区内未提交的改动并给出整理建议"
+              className="w-full px-3 py-2 bg-n-900 border border-line rounded-lg text-[12.5px] leading-relaxed text-fg placeholder-fg-faint outline-none focus:border-primary-border transition-colors resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-fg-subtle mb-1.5">触发方式</label>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setMode("daily")}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11.5px] transition-colors ${
+                  mode === "daily"
+                    ? "bg-primary-bg border-primary-border text-primary"
+                    : "border-line text-fg-subtle hover:text-fg-muted"
+                }`}
+              >
+                每天
+              </button>
+              <button
+                onClick={() => setMode("every")}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11.5px] transition-colors ${
+                  mode === "every"
+                    ? "bg-primary-bg border-primary-border text-primary"
+                    : "border-line text-fg-subtle hover:text-fg-muted"
+                }`}
+              >
+                每隔 N 分钟
+              </button>
+              {mode === "daily" ? (
+                <input
+                  type="time"
+                  value={dailyAt}
+                  onChange={(e) => setDailyAt(e.target.value)}
+                  className="field !h-9 !w-28"
+                />
+              ) : (
+                <input
+                  type="number"
+                  min={1}
+                  value={everyMinutes}
+                  onChange={(e) => setEveryMinutes(e.target.value)}
+                  className="field !h-9 !w-28"
+                />
+              )}
+            </div>
+            <p className="mt-1.5 text-[10.5px] text-fg-faint">
+              执行同样受治理：预算检查、策略、审计一个不少
+            </p>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/** 记忆管理：各助手沉淀的长期记忆（治理透明化；只读视图） */
+function MemoryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const workers = useWorkerStore((s) => s.mine);
+  const [items, setItems] = useState<Array<{ id: string; name: string; summary?: string }> | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setItems(null);
+    void Promise.all(
+      workers.map(async (w) => {
+        const s = await ipc.workerStatus({ id: w.id }).catch(() => null);
+        return { id: w.id, name: w.name, summary: s?.memorySummary };
+      }),
+    ).then((r) => { if (alive) setItems(r); });
+    return () => { alive = false; };
+  }, [open, workers]);
+
+  return (
+    <Modal open={open} title="记忆管理" onClose={onClose}>
+      {items === null ? (
+        <p className="text-[12px] text-fg-faint">读取中…</p>
+      ) : items.length === 0 ? (
+        <p className="text-[12px] text-fg-faint">还没有分配到助手</p>
+      ) : (
+        <div className="space-y-3 max-h-80 overflow-y-auto">
+          {items.map((it) => (
+            <div key={it.id}>
+              <div className="text-[11px] font-medium text-fg mb-1">{it.name}</div>
+              {it.summary ? (
+                <p className="text-[11.5px] text-fg-subtle leading-relaxed rounded-lg border border-line bg-n-900/50 px-3 py-2">
+                  {it.summary}
+                </p>
+              ) : (
+                <p className="text-[11px] text-fg-faint">未开启长期记忆（对话后自动积累）</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }

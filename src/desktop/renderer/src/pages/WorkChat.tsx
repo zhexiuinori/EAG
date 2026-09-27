@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from "react";
 import * as ipc from "../lib/ipc.ts";
 import FileBrowser from "../components/FileBrowser.tsx";
@@ -12,7 +12,7 @@ import { useTaskStore } from "../stores/taskStore.ts";
 import { useUserStore } from "../stores/userStore.ts";
 import { markAgentsSeen } from "../lib/seen.ts";
 import {
-  IconChat, IconTerminal, IconFolder, IconDiff, IconGauge, IconInfo,
+  IconTerminal, IconFolder, IconDiff, IconGauge, IconInfo,
   IconArrowLeft, IconPlus, IconSparkle, IconCopy, IconCheck,
   IconSend, IconStop, IconTrash, IconEdit, IconMore, IconChevronDown, IconX,
   IconFile, IconChevronRight, IconRefresh, IconPaperclip, IconPlay,
@@ -28,14 +28,15 @@ import {
 } from "../lib/sessions.ts";
 
 /**
- * 用户侧工作区。
+ * 用户侧工作区（Dolphin 形态：对话优先）。
  *
- * 结构参照主流 Agent 平台（QwenPaw / OpenHands）：对话只是工作区中的一个
- * 面板，与文件、变更、用量、信息平级。
+ * 对话始终是主区；执行 / 文件 / 变更 / 用量 / 信息收进标题栏右侧
+ * 打开的抽屉面板，不再与对话平级。
  *
  * 会话模型：一个 Worker 下可以有多个会话，路由为
  *   /app/chat/:workerId/:sessionId
  * 不带 sessionId 时自动解析到最近的会话（必要时新建）。
+ * 从首页大输入框进入时，首条消息经路由 state（prompt）带入并自动发出。
  */
 
 /** 消息类型与存储层共用 */
@@ -361,10 +362,13 @@ function ToolCallRow({ tool }: { tool: ToolCard }) {
 
 
 
-type TabKey = "chat" | "terminal" | "files" | "changes" | "usage" | "info";
+/**
+ * Dolphin 形态：对话始终是主区，不再有平级标签页。
+ * 执行 / 文件 / 变更 / 用量 / 信息改为标题栏右侧的抽屉入口。
+ */
+type DrawerKey = "terminal" | "files" | "changes" | "usage" | "info";
 
-const TABS: Array<{ key: TabKey; label: string; icon: (p: IconProps) => ReactNode }> = [
-  { key: "chat", label: "对话", icon: IconChat },
+const DRAWERS: Array<{ key: DrawerKey; label: string; icon: (p: IconProps) => ReactNode }> = [
   { key: "terminal", label: "执行", icon: IconTerminal },
   { key: "files", label: "文件", icon: IconFolder },
   { key: "changes", label: "变更", icon: IconDiff },
@@ -375,8 +379,9 @@ const TABS: Array<{ key: TabKey; label: string; icon: (p: IconProps) => ReactNod
 export default function WorkChat() {
   const { workerId, sessionId: routeSessionId } = useParams<{ workerId: string; sessionId?: string }>();
   const nav = useNavigate();
+  const loc = useLocation();
 
-  const [tab, setTab] = useState<TabKey>("chat");
+  const [drawer, setDrawer] = useState<DrawerKey | null>(null);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -452,6 +457,17 @@ export default function WorkChat() {
   const stickToBottom = useRef(true);
   /** 多行输入框自适应高度 */
   const taRef = useRef<HTMLTextAreaElement>(null);
+  /** 从首页大输入框带入的首条消息（路由 state.prompt），会话就绪后自动发出 */
+  const portalPromptRef = useRef<string | null>(null);
+
+  // 捕获路由 state 里的首条消息并立即清掉 state：刷新页面不会重复发送
+  useEffect(() => {
+    const st = loc.state as { prompt?: unknown } | null;
+    if (st && typeof st.prompt === "string" && st.prompt.trim() && portalPromptRef.current === null) {
+      portalPromptRef.current = st.prompt.trim();
+      nav(loc.pathname, { replace: true, state: null });
+    }
+  }, [loc.state, loc.pathname, nav]);
 
   // 解析会话：未指定 sessionId 时落到最近的会话，并补全 URL。
   // 会话按用户隔离：必须等身份就绪后再解析，否则会落到匿名作用域。
@@ -553,9 +569,9 @@ export default function WorkChat() {
   }, [workerId]);
 
   useEffect(() => {
-    if (tab !== "chat" || !stickToBottom.current) return;
+    if (!stickToBottom.current) return;
     endRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [messages, tab]);
+  }, [messages]);
 
   // 输入框随内容增长（上限 180px，超出后内部滚动）
   useEffect(() => {
@@ -863,6 +879,15 @@ export default function WorkChat() {
     void sendText(head.text).finally(() => { dequeuingRef.current = false; });
   }, [sending, queue, workerId, sendText]);
 
+  // 首页带入的首条消息：等会话解析完成、且当前不在发送中时自动发出
+  useEffect(() => {
+    if (!session || sending) return;
+    const p = portalPromptRef.current;
+    if (!p) return;
+    portalPromptRef.current = null;
+    void sendText(p);
+  }, [session, sending, sendText]);
+
   // 后台任务：初次加载 + 面板展开且有运行中任务时轮询输出预览
   useEffect(() => {
     if (!workerId) return;
@@ -1024,6 +1049,9 @@ export default function WorkChat() {
 
     const writeCount = fileChanges.filter((f) => f.action === "write").length;
 
+    // 当前打开的抽屉元信息（标题栏图标与抽屉头共用）
+    const activeDrawer = drawer ? DRAWERS.find((d) => d.key === drawer) ?? null : null;
+
     // 当前正在做什么：取消息里最近一个仍在运行的工具调用
     const currentAction = useMemo(() => {
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -1077,8 +1105,8 @@ export default function WorkChat() {
             </button>
           )}
           <button
-            onClick={() => nav(`/app/agent/${workerId}`)}
-            title="查看助手主页（进度 / 文件 / 变更 / 用量）"
+            onClick={() => setDrawer("info")}
+            title="查看助手信息（引擎 / 记忆 / 预算 / 生效策略）"
             className="text-[10.5px] text-fg-faint truncate leading-tight text-left hover:text-primary transition-colors"
           >
             {worker?.name ?? workerId}
@@ -1140,6 +1168,35 @@ export default function WorkChat() {
 
         <div className="flex-1" />
 
+        {/* 治理抽屉入口（Dolphin 形态：执行 / 文件 / 变更 / 用量 / 信息） */}
+        <div className="flex items-center gap-0.5">
+          {DRAWERS.map((d) => {
+            const Icon = d.icon;
+            const active = drawer === d.key;
+            const badge = d.key === "changes" && fileChanges.length ? fileChanges.length : null;
+            return (
+              <button
+                key={d.key}
+                onClick={() => setDrawer(active ? null : d.key)}
+                title={d.label}
+                className={`relative p-1.5 rounded-md transition-colors ${
+                  active
+                    ? "text-primary bg-primary-bg"
+                    : "text-fg-subtle hover:text-fg-muted hover:bg-n-850/60"
+                }`}
+              >
+                <Icon size={15} />
+                {badge !== null && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-primary text-white text-[9px] font-bold leading-3.5 text-center">
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div className="h-4 w-px bg-line" />
+
         {/* 会话操作 */}
         <button
           onClick={newSession}
@@ -1184,36 +1241,7 @@ export default function WorkChat() {
         </Dropdown>
       </div>
 
-      {/* 工作区标签：对话只是其中一个 */}
-      <div className="shrink-0 flex items-center gap-0.5 px-4 border-b border-line bg-surface/30">
-        {TABS.map((t) => {
-          const active = tab === t.key;
-          const Icon = t.icon;
-          const badge = t.key === "changes" && fileChanges.length ? fileChanges.length : null;
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`relative flex items-center gap-1.5 px-3 py-2.5 text-[12px] font-medium transition-colors ${
-                active ? "text-fg" : "text-fg-subtle hover:text-fg-muted"
-              }`}
-            >
-              <Icon size={14} className={active ? "text-primary" : "text-fg-faint"} />
-              {t.label}
-              {badge !== null && (
-                <span className="text-[10px] text-fg-faint bg-n-850 border border-line rounded px-1 leading-4">
-                  {badge}
-                </span>
-              )}
-              {active && (
-                <span className="absolute bottom-0 left-2 right-2 h-[2px] rounded-t-full bg-primary" />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-        {/* Agent 状态条：任何 tab 都可见 */}
+        {/* Agent 状态条：始终可见 */}
         <AgentStatusBar
           name={worker?.name ?? workerId ?? "助手"}
           model={activeModel?.modelName ?? worker?.config.modelName}
@@ -1224,9 +1252,8 @@ export default function WorkChat() {
           budgetLimitUsd={wsStatus?.budgetLimitUsd}
         />
 
-      {/* 工作区内容 */}
+      {/* 工作区内容：对话始终是主区 */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {tab === "chat" && (
           <>
             <div
               ref={scrollRef}
@@ -1239,7 +1266,7 @@ export default function WorkChat() {
                     <IconSparkle size={20} className="text-primary" />
                   </div>
                   <p className="text-[13px] font-medium text-fg-muted mb-1">开始对话</p>
-                  <p className="text-[11.5px] text-fg-faint">工具调用会显示为卡片，文件改动见「变更」标签</p>
+                  <p className="text-[11.5px] text-fg-faint">工具调用会显示为卡片，文件改动见右上角「变更」面板</p>
                 </div>
               ) : (
                 messages.map((m, i) => {
@@ -1622,40 +1649,47 @@ export default function WorkChat() {
               </div>
             </div>
           </>
-        )}
+      </div>
 
-        {tab === "terminal" && workerId && (
-          <div className="flex-1 min-h-0 p-4">
-            <div className="mb-3">
-              <h2 className="text-sm font-semibold text-n-200">执行</h2>
-              <p className="text-[11px] text-n-500 mt-0.5">
-                Agent 与你执行的所有命令汇聚于此；终端命令过策略、全部记录审计
-              </p>
+      {/* 治理抽屉：从右侧滑入（执行 / 文件 / 变更 / 用量 / 信息） */}
+      {drawer && (
+        <div className="fixed inset-0 z-40">
+          <div className="absolute inset-0 bg-black/45" onClick={() => setDrawer(null)} />
+          <div className="absolute inset-y-0 right-0 w-[520px] max-w-[94vw] flex flex-col bg-base border-l border-line shadow-2xl animate-in">
+            <div className="shrink-0 h-12 px-4 border-b border-line flex items-center gap-2">
+              <span className="text-[13px] font-medium text-fg">{activeDrawer?.label}</span>
+              <button
+                onClick={() => setDrawer(null)}
+                title="关闭"
+                className="ml-auto p-1.5 rounded-md text-fg-subtle hover:text-fg-muted hover:bg-n-850/60 transition-colors"
+              >
+                <IconX size={14} />
+              </button>
             </div>
-            <div className="h-[calc(100%-3.5rem)]">
+            <div className="flex-1 min-h-0 flex flex-col">
+        {drawer === "terminal" && workerId && (
+          <div className="flex-1 min-h-0 p-4 flex flex-col">
+            <p className="shrink-0 text-[11px] text-n-500 mb-3">
+              Agent 与你执行的所有命令汇聚于此；终端命令过策略、全部记录审计
+            </p>
+            <div className="flex-1 min-h-0">
               <Terminal sessionId={workerId} />
             </div>
           </div>
         )}
 
-        {tab === "files" && (
+        {drawer === "files" && (
           <div className="flex-1 overflow-y-auto p-4">
-            <div className="mb-3">
-              <h2 className="text-sm font-semibold text-n-200">文件</h2>
-              <p className="text-[11px] text-n-500 mt-0.5">
-                受治理的文件工作区：策略判定为不可见的条目不会出现，读写均记录审计
-              </p>
-            </div>
-            <div className="max-w-2xl">
-              <FileBrowser />
-            </div>
+            <p className="text-[11px] text-n-500 mb-3">
+              受治理的文件工作区：策略判定为不可见的条目不会出现，读写均记录审计
+            </p>
+            <FileBrowser />
           </div>
         )}
 
-        {tab === "changes" && (
+        {drawer === "changes" && (
           <div className="flex-1 overflow-y-auto p-4">
             <div className="flex items-center gap-3 mb-3">
-              <h2 className="text-sm font-semibold text-n-200">变更</h2>
               <span className="text-[11px] text-n-500">{fileChanges.length} 个文件 · {writeCount} 处写入</span>
             </div>
             {fileChanges.length === 0 ? (
@@ -1704,9 +1738,8 @@ export default function WorkChat() {
           </div>
         )}
 
-        {tab === "usage" && (
+        {drawer === "usage" && (
           <div className="flex-1 overflow-y-auto p-4">
-            <h2 className="text-sm font-semibold text-n-200 mb-1">用量</h2>
             <p className="text-[11px] text-n-500 mb-4">数据来自本次会话的 cost 事件</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl">
               {[
@@ -1727,9 +1760,8 @@ export default function WorkChat() {
           </div>
         )}
 
-        {tab === "info" && (
+        {drawer === "info" && (
           <div className="flex-1 overflow-y-auto p-4">
-            <h2 className="text-sm font-semibold text-n-200 mb-3">会话信息</h2>
             <div className="space-y-3 text-[11px] max-w-2xl">
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-n-500 font-semibold mb-1">Worker</div>
@@ -1818,7 +1850,10 @@ export default function WorkChat() {
             </div>
           </div>
         )}
-      </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 删除会话确认（替代 window.confirm） */}
       <ConfirmModal

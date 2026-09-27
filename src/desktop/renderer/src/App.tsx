@@ -1,9 +1,8 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import Layout from "./components/Layout.tsx";
 import Workspace from "./pages/Workspace.tsx";
 import WorkChat from "./pages/WorkChat.tsx";
 import Activity from "./pages/Activity.tsx";
-import AgentHome from "./pages/AgentHome.tsx";
 import AdminWorkers from "./pages/AdminWorkers.tsx";
 import Audit from "./pages/Audit.tsx";
 import Policy from "./pages/Policy.tsx";
@@ -19,6 +18,15 @@ import NotFound from "./pages/NotFound.tsx";
 import RequireAuth from "./components/RequireAuth.tsx";
 import RequireAdmin from "./components/RequireAdmin.tsx";
 
+/**
+ * 旧的 Agent 主页（/app/agent/:id）：Dolphin 形态后其内容（文件/变更/用量/信息）
+ * 已并入会话页右侧抽屉，旧链接统一重定向到会话页。
+ */
+function AgentHomeRedirect() {
+  const { workerId } = useParams<{ workerId: string }>();
+  return <Navigate to={`/app/chat/${workerId}`} replace />;
+}
+
 export default function App() {
   return (
     <Layout>
@@ -30,7 +38,7 @@ export default function App() {
         <Route index element={<Navigate to="/app" replace />} />
         <Route path="/app" element={<RequireAuth><Workspace /></RequireAuth>} />
         <Route path="/app/activity" element={<RequireAuth><Activity /></RequireAuth>} />
-        <Route path="/app/agent/:workerId" element={<RequireAuth><AgentHome /></RequireAuth>} />
+        <Route path="/app/agent/:workerId" element={<RequireAuth><AgentHomeRedirect /></RequireAuth>} />
         <Route path="/app/chat/:workerId" element={<RequireAuth><WorkChat /></RequireAuth>} />
         <Route path="/app/chat/:workerId/:sessionId" element={<RequireAuth><WorkChat /></RequireAuth>} />
 
