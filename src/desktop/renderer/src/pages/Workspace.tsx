@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Button from "../components/Button.tsx";
 import EmptyState from "../components/EmptyState.tsx";
 import Dropdown, { MenuItem, MenuDivider } from "../components/Dropdown.tsx";
+import QuickCreateWorker from "../components/QuickCreateWorker.tsx";
 import { useWorkerStore } from "../stores/workerStore.ts";
 import { useUserStore } from "../stores/userStore.ts";
 import { getSeenAgentIds, markAgentsSeen } from "../lib/seen.ts";
@@ -75,6 +76,7 @@ export default function Workspace() {
   );
 
   const [recent, setRecent] = useState<ChatSession[]>([]);
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
   const loading = !loadedWorkers;
 
   // 大输入框：选定助手 + 首条消息
@@ -246,8 +248,8 @@ export default function Workspace() {
                 title="还没有分配到助手"
                 description="管理员为你创建并分配 AI 助手后，它会出现在这里。"
                 action={canConsole ? (
-                  <Button variant="primary" onClick={() => nav("/admin/workers")}>
-                    前往管理控制台
+                  <Button variant="primary" icon={<IconPlus size={13} />} onClick={() => setShowQuickCreate(true)}>
+                    新建助手
                   </Button>
                 ) : undefined}
               />
@@ -325,10 +327,10 @@ export default function Workspace() {
                 );
               })}
 
-              {/* 新建助手（管理员入口）：直达创建表单，免去落地后再找按钮 */}
+              {/* 新建助手（快速创建：3 字段，治理属性继承团队默认；高级创建在管理端） */}
               {canConsole && (
                 <button
-                  onClick={() => nav("/admin/workers", { state: { create: true } })}
+                  onClick={() => setShowQuickCreate(true)}
                   className="rounded-xl border border-dashed border-line-strong text-fg-faint hover:text-primary hover:border-primary-border transition-colors p-4 flex flex-col items-center justify-center gap-1.5 min-h-[104px]"
                 >
                   <IconPlus size={18} />
@@ -375,6 +377,16 @@ export default function Workspace() {
           </div>
         )}
       </div>
+
+      {/* 快速创建助手（一期）：3 字段，治理属性继承团队默认；创建成功直接进入对话 */}
+      <QuickCreateWorker
+        open={showQuickCreate}
+        onClose={() => setShowQuickCreate(false)}
+        onCreated={(id) => {
+          setShowQuickCreate(false);
+          void loadMine(true).then(() => nav(`/app/chat/${id}`));
+        }}
+      />
     </div>
   );
 }
